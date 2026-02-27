@@ -4,3 +4,4 @@ assets/external/
 .web
 .states
 *.py[cod]
+ips.json
