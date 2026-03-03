@@ -1,0 +1,4 @@
+[
+    {"nome": "Roteador Principal", "ip":"192.168.0.1"},
+    {"nome": "Internet","ip": "8.8.8.8"}
+]

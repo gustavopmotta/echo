@@ -41,7 +41,7 @@ Para executar o projeto, você precisará ter instalado em sua máquina:
    pip install `requirements.txt`
 
 5. Configuração dos Ativos:
-   * Localize o arquivo `ips.example.json` na raiz do projeto.
+   * Localize o arquivo `ips-example.json` na raiz do projeto.
    * Renomeie este arquivo para `ips.json`.
    * Edite o arquivo inserindo os nomes e endereços IP reais dos equipamentos que você deseja monitorar na sua rede.
 
@@ -55,5 +55,8 @@ Para executar o projeto, você precisará ter instalado em sua máquina:
 
 O sistema espera ler um array de objetos JSON contendo as chaves "nome" e "ip", conforme o exemplo abaixo:
 ```json
-{"nome": "Roteador Principal", "ip":"192.168.0.1"},
-{"nome": "Internet","ip": "8.8.8.8"}
+[
+    {"nome": "Roteador Principal", "ip":"192.168.0.1"},
+    {"nome": "Internet","ip": "8.8.8.8"}
+]
+
