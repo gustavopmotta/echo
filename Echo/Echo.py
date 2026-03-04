@@ -15,6 +15,7 @@ PINGS_MAXIMOS = 12
 class AtivoRede(pydantic.BaseModel):
     nome: str
     ip: str
+    local: str
     latencia: float = 0.0
     status: str = "Aguardando..."
     historico: list[dict[str, str | float]] = []
@@ -37,13 +38,28 @@ def carregar_ativos():
         print("Carregando ativos de ips.json...")
         with open('Echo\ips.json', 'r', encoding='utf-8') as f:
             dados = json.load(f)
-            return [AtivoRede(nome=item['nome'], ip=item['ip']) for item in dados]
+            return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in dados]
     
-    return [AtivoRede(nome="Configurar ips.json", ip="127.0.0.1")]
+    return [AtivoRede(nome="Configurar ips.json", ip="127.0.0.1", local="N/A")]
 
 class EchoState(rx.State):
     ativos: list[AtivoRede] = carregar_ativos()
     monitorando: bool = False
+
+    def parar_monitoramento(self):
+        self.monitorando = False
+        ativos_resetados = []
+        for ativo in self.ativos:
+            ativo_limpo = AtivoRede(
+                nome=ativo.nome,
+                ip=ativo.ip,
+                local=ativo.local,
+                status="Aguardando...",
+                latencia=0.0,
+                historico=[]
+            )
+            ativos_resetados.append(ativo_limpo)
+        self.ativos = ativos_resetados
 
     async def loop_monitoramento(self):
         self.monitorando = True
@@ -78,6 +94,7 @@ class EchoState(rx.State):
                 novo_ativo = AtivoRede(
                     nome=ativo.nome,
                     ip=ativo.ip,
+                    local=ativo.local,
                     status=novo_status,
                     latencia=nova_latencia,
                     historico=novo_historico
@@ -90,20 +107,6 @@ class EchoState(rx.State):
             yield
 
             await asyncio.sleep(INTERVALO_SEGUNDOS)
-
-    def parar_monitoramento(self):
-        self.monitorando = False
-        ativos_resetados = []
-        for ativo in self.ativos:
-            ativo_limpo = AtivoRede(
-                nome=ativo.nome,
-                ip=ativo.ip,
-                status="Aguardando...",
-                latencia=0.0,
-                historico=[]
-            )
-            ativos_resetados.append(ativo_limpo)
-        self.ativos = ativos_resetados
 
 def renderizar_card(ativo: AtivoRede):
     cor_borda = rx.cond(ativo.status == "Online", "green", 
@@ -131,7 +134,12 @@ def renderizar_card(ativo: AtivoRede):
             rx.hstack(
                 rx.vstack(
                     rx.heading(ativo.nome, size="4"),
-                    rx.text(f"IP: {ativo.ip}", color="gray"),
+                    rx.flex(
+                        rx.text(f"IP: {ativo.ip}", color="gray"),
+                        rx.text(f"Local: {ativo.local}", color="gray"),
+                        spacing="0",
+                        direction="column",
+                    ),
                     align_items="start"
                 ),
                 rx.spacer(),
