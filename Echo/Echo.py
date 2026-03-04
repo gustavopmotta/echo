@@ -136,7 +136,7 @@ def renderizar_card(ativo: AtivoRede):
                     rx.heading(ativo.nome, size="4"),
                     rx.flex(
                         rx.text(f"IP: {ativo.ip}", color="gray"),
-                        rx.text(f"Local: {ativo.local}", color="gray"),
+                        rx.text(f"Local: {ativo.local}", color="gray", size="1"),
                         spacing="0",
                         direction="column",
                     ),
@@ -147,7 +147,7 @@ def renderizar_card(ativo: AtivoRede):
                     rx.badge(ativo.status, color_scheme=cor_borda),
                     rx.cond(
                         ativo.status != "Offline",
-                        rx.text(f"{ativo.latencia} ms", font_weight="bold"),
+                        rx.text(f"{ativo.latencia} ms", font_weight="bold", size="4"),
                     ),
                     align_items="end"
                 ),
