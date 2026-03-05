@@ -8,10 +8,12 @@ import json
 import os
 import pydantic
 
+# Configurações
 INTERVALO_SEGUNDOS = 10
 LIMITE_LATENCIA_MS = 100.0
 PINGS_MAXIMOS = 12
 
+# Estrutura do ativo de rede
 class AtivoRede(pydantic.BaseModel):
     nome: str
     ip: str
@@ -20,6 +22,7 @@ class AtivoRede(pydantic.BaseModel):
     status: str = "Aguardando..."
     historico: list[dict[str, str | float]] = []
 
+# Função para obter a latência de um IP usando ping
 def obter_latencia(ip: str) -> float | None:
     parametro = '-n' if platform.system().lower() == 'windows' else '-c'
     comando = ['ping', parametro, '1', ip]
@@ -33,6 +36,7 @@ def obter_latencia(ip: str) -> float | None:
         pass
     return None
 
+# Processamento de ativos a partir do arquivo ips.json
 def carregar_ativos():
     if os.path.exists('Echo\ips.json'):
         print("Carregando ativos de ips.json...")
@@ -42,18 +46,23 @@ def carregar_ativos():
     
     return [AtivoRede(nome="Configurar ips.json", ip="127.0.0.1", local="N/A")]
 
+# --- ESTADO DE MONITORAMENTO ---
 class EchoState(rx.State):
+    # Configurações iniciais
     ativos: list[AtivoRede] = carregar_ativos()
     monitorando: bool = False
     
+    # Loop de ping para monitoramento contínuo
     @rx.event(background=True)
     async def loop_monitoramento(self):
+        # Verificação inicial para evitar múltiplas execuções simultâneas
         async with self:
             if self.monitorando:
                 return
             self.monitorando = True
         
         while True:
+            # Cópia dos ativos para evitar bloqueios durante a atualização
             async with self:
                 if not self.monitorando:
                     break
@@ -62,6 +71,7 @@ class EchoState(rx.State):
             ativos_atualizados = []
             hora_atual = datetime.now().strftime("%H:%M:%S")
             
+            # Criação de novos ativos com status e latência atualizados
             for ativo in ativos_atuais:
                 latencia_ms = obter_latencia(ativo.ip)
                 
@@ -95,13 +105,15 @@ class EchoState(rx.State):
                 
                 ativos_atualizados.append(novo_ativo)
             
+            # Atualização dos ativos na interface
             async with self:
                 if not self.monitorando:
                     break
                 self.ativos = ativos_atualizados
             
             await asyncio.sleep(INTERVALO_SEGUNDOS)
-        
+    
+    # Pausar monitoramento e reiniciar ativos para estado inicial   
     def parar_monitoramento(self):
         self.monitorando = False
         ativos_resetados = []
@@ -117,10 +129,12 @@ class EchoState(rx.State):
             ativos_resetados.append(ativo_limpo)
         self.ativos = ativos_resetados
 
+# --- CARD ---
 def renderizar_card(ativo: AtivoRede):
     cor_borda = rx.cond(ativo.status == "Online", "green", 
                 rx.cond(ativo.status == "Lento", "orange", "red"))
     
+    # Configuração do gráfico de barras de latência
     grafico = rx.recharts.bar_chart(
         rx.recharts.bar(
             data_key="latencia",
@@ -138,6 +152,7 @@ def renderizar_card(ativo: AtivoRede):
         width="100%",
     )
     
+    # Configuração do card de ativos
     return rx.card(
         rx.vstack(
             rx.hstack(
@@ -170,11 +185,14 @@ def renderizar_card(ativo: AtivoRede):
         width="100%",
     )
 
+# --- PÁGINA DO PAINEL ---
 def index() -> rx.Component:
     return rx.box( 
         rx.vstack(
+            # Titulo do painel
             rx.heading("ECHO.", size="8", margin_bottom="1em"),
             
+            # Botões de controle
             rx.hstack(
                 rx.button(
                     "Iniciar Monitoramento", 
@@ -192,6 +210,7 @@ def index() -> rx.Component:
             
             rx.divider(margin_y="1em"),
             
+            # Cards de ativos
             rx.grid(
                 rx.foreach(EchoState.ativos, renderizar_card),
                 columns="4",
@@ -206,5 +225,6 @@ def index() -> rx.Component:
         height="100%",
     )
 
+# --- CONFIGURAÇÃO DO APP ---
 app = rx.App()
 app.add_page(index, title="Painel Echo")
