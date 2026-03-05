@@ -56,7 +56,7 @@ Para executar o projeto, você precisará ter instalado em sua máquina:
 O sistema espera ler um array de objetos JSON contendo as chaves "nome" e "ip", conforme o exemplo abaixo:
 ```json
 [
-    {"nome": "Roteador Principal", "ip":"192.168.0.1"},
-    {"nome": "Internet","ip": "8.8.8.8"}
+    {"nome": "Roteador Principal", "ip": "192.168.0.1", "local": "Sala de Estar"},
+    {"nome": "Internet", "ip": "8.8.8.8", "local": "N/A"}
 ]
 
