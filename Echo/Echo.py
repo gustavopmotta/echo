@@ -78,6 +78,7 @@ class EchoState(rx.State):
                 novo_status = "Aguardando..."
                 nova_latencia = 0.0
                 
+                # Estados de latência
                 if latencia_ms is None:
                     novo_status = "Offline"
                     nova_latencia = 0.0
@@ -187,7 +188,7 @@ def renderizar_card(ativo: AtivoRede):
 
 # --- PÁGINA DO PAINEL ---
 def index() -> rx.Component:
-    return rx.box( 
+    return rx.box(
         rx.vstack(
             # Titulo do painel
             rx.heading("ECHO.", size="8", margin_bottom="1em"),
@@ -195,13 +196,13 @@ def index() -> rx.Component:
             # Botões de controle
             rx.hstack(
                 rx.button(
-                    "Iniciar Monitoramento", 
+                    rx.icon("play"), 
                     on_click=EchoState.loop_monitoramento, 
                     color_scheme="green",
                     disabled=EchoState.monitorando
                 ),
                 rx.button(
-                    "Pausar", 
+                    rx.icon("pause"), 
                     on_click=EchoState.parar_monitoramento, 
                     color_scheme="red",
                     disabled=~EchoState.monitorando
