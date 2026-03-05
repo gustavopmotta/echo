@@ -1,8 +1,8 @@
 <div align="center">
 <h1>ECHO.</h1>
 
-![Reflex](https://img.shields.io/badge/Reflex-6E56CF?style=for-the-badge&logo=reflex&label=Framework)
-![Python](https://img.shields.io/badge/3.13-3776AB?style=for-the-badge&logo=python&label=Python)
+![Reflex](https://img.shields.io/badge/Reflex-6E56CF?style=flat-square&logo=reflex&label=Framework)
+![Python](https://img.shields.io/badge/3.13-3776AB?style=flat-square&logo=python&label=Python)
 </div>
 
 O Echo é uma ferramenta de código aberto desenvolvida em Python para monitorar a conectividade e a latência de ativos de rede interna. Utilizando o framework Reflex, o sistema fornece um painel web em tempo real para visualização do status de roteadores, switches, servidores e outros dispositivos.
