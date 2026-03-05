@@ -45,31 +45,24 @@ def carregar_ativos():
 class EchoState(rx.State):
     ativos: list[AtivoRede] = carregar_ativos()
     monitorando: bool = False
-
-    def parar_monitoramento(self):
-        self.monitorando = False
-        ativos_resetados = []
-        for ativo in self.ativos:
-            ativo_limpo = AtivoRede(
-                nome=ativo.nome,
-                ip=ativo.ip,
-                local=ativo.local,
-                status="Aguardando...",
-                latencia=0.0,
-                historico=[]
-            )
-            ativos_resetados.append(ativo_limpo)
-        self.ativos = ativos_resetados
-
+    
+    @rx.event(background=True)
     async def loop_monitoramento(self):
-        self.monitorando = True
-        yield
+        async with self:
+            if self.monitorando:
+                return
+            self.monitorando = True
         
-        while self.monitorando:
+        while True:
+            async with self:
+                if not self.monitorando:
+                    break
+                ativos_atuais = self.ativos.copy()
+            
             ativos_atualizados = []
             hora_atual = datetime.now().strftime("%H:%M:%S")
             
-            for ativo in self.ativos:
+            for ativo in ativos_atuais:
                 latencia_ms = obter_latencia(ativo.ip)
                 
                 novo_status = "Aguardando..."
@@ -88,7 +81,7 @@ class EchoState(rx.State):
                 novo_historico = ativo.historico.copy()
                 novo_historico.append({"hora": hora_atual, "latencia": nova_latencia})
                 
-                if len(novo_historico) > PINGS_MAXIMOS:
+                if len(novo_historico) > 15:
                     novo_historico.pop(0)
                 
                 novo_ativo = AtivoRede(
@@ -102,11 +95,27 @@ class EchoState(rx.State):
                 
                 ativos_atualizados.append(novo_ativo)
             
-            self.ativos = ativos_atualizados
+            async with self:
+                if not self.monitorando:
+                    break
+                self.ativos = ativos_atualizados
             
-            yield
-
             await asyncio.sleep(INTERVALO_SEGUNDOS)
+        
+    def parar_monitoramento(self):
+        self.monitorando = False
+        ativos_resetados = []
+        for ativo in self.ativos:
+            ativo_limpo = AtivoRede(
+                nome=ativo.nome,
+                ip=ativo.ip,
+                local=ativo.local,
+                status="Aguardando...",
+                latencia=0.0,
+                historico=[]
+            )
+            ativos_resetados.append(ativo_limpo)
+        self.ativos = ativos_resetados
 
 def renderizar_card(ativo: AtivoRede):
     cor_borda = rx.cond(ativo.status == "Online", "green", 
