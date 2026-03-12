@@ -1,4 +1,5 @@
 from datetime import datetime
+from dotenv import load_dotenv
 import reflex as rx
 import subprocess
 import platform
@@ -7,6 +8,7 @@ import asyncio
 import json
 import os
 import pydantic
+import resend
 
 # Configurações
 INTERVALO_SEGUNDOS = 10
@@ -149,7 +151,7 @@ def renderizar_card(ativo: AtivoRede):
         rx.recharts.y_axis(hide=False, width=40, domain=[0, LIMITE_LATENCIA_MS]),
         rx.recharts.graphing_tooltip(),
         data=ativo.historico,
-        height=200,
+        height=160,
         width="100%",
     )
     
@@ -206,6 +208,9 @@ def index() -> rx.Component:
                     on_click=EchoState.parar_monitoramento, 
                     color_scheme="red",
                     disabled=~EchoState.monitorando
+                ),
+                rx.button(
+                    rx.icon("pencil")
                 ),
             ),
             

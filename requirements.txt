@@ -1,1 +1,11 @@
-reflex==0.8.27
+reflex
+datetime
+dotenv
+subprocess
+platform
+re
+asyncio
+json
+os
+pydantic
+resend
