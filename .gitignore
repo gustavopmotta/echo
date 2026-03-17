@@ -5,4 +5,4 @@ assets/external/
 .states
 *.py[cod]
 ips.json
-.env
+*.env

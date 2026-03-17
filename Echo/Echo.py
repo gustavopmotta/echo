@@ -1,3 +1,4 @@
+from email.mime.text import MIMEText
 from datetime import datetime
 from dotenv import load_dotenv
 import reflex as rx
@@ -8,7 +9,16 @@ import asyncio
 import json
 import os
 import pydantic
-import resend
+import smtplib
+
+# Carregando arquivo de acesso do email
+load_dotenv('Echo/email.env')
+
+# Configurações do Brevo
+SMTP_SERVER = "smtp-relay.brevo.com"
+SMTP_PORT = 587
+SMTP_LOGIN = os.environ.get("BREVO_SMTP_LOGIN")
+SMTP_PASSWORD = os.environ.get("BREVO_SMTP_PASSWORD")
 
 # Configurações
 INTERVALO_SEGUNDOS = 10
@@ -40,9 +50,9 @@ def obter_latencia(ip: str) -> float | None:
 
 # Processamento de ativos a partir do arquivo ips.json
 def carregar_ativos():
-    if os.path.exists('Echo\ips.json'):
+    if os.path.exists('Echo/ips.json'):
         print("Carregando ativos de ips.json...")
-        with open('Echo\ips.json', 'r', encoding='utf-8') as f:
+        with open('Echo/ips.json', 'r', encoding='utf-8') as f:
             dados = json.load(f)
             return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in dados]
     
