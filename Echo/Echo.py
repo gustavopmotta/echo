@@ -2,7 +2,7 @@ from email.mime.text import MIMEText
 from datetime import datetime
 from dotenv import load_dotenv
 import reflex as rx
-import subprocess
+import icmplib
 import platform
 import re
 import asyncio
@@ -33,20 +33,6 @@ class AtivoRede(pydantic.BaseModel):
     latencia: float = 0.0
     status: str = "Aguardando..."
     historico: list[dict[str, str | float]] = []
-
-# Função para obter a latência de um IP usando ping
-def obter_latencia(ip: str) -> float | None:
-    parametro = '-n' if platform.system().lower() == 'windows' else '-c'
-    comando = ['ping', parametro, '1', ip]
-    
-    try:
-        resultado = subprocess.run(comando, stdout=subprocess.PIPE, text=True, timeout=5)
-        match = re.search(r'(?:time|tempo)[=<]([\d.]+)', resultado.stdout, re.IGNORECASE)
-        if match:
-            return float(match.group(1))
-    except Exception:
-        pass
-    return None
 
 # Processamento de ativos a partir do arquivo ips.json
 def carregar_ativos():
@@ -85,7 +71,7 @@ class EchoState(rx.State):
             
             # Criação de novos ativos com status e latência atualizados
             for ativo in ativos_atuais:
-                latencia_ms = obter_latencia(ativo.ip)
+                latencia_ms = icmplib.ping(ativo.ip, count=1, timeout=2).avg_rtt
                 
                 novo_status = "Aguardando..."
                 nova_latencia = 0.0
