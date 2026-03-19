@@ -3,13 +3,10 @@ from datetime import datetime
 from dotenv import load_dotenv
 import reflex as rx
 import icmplib
-import platform
-import re
 import asyncio
 import json
 import os
 import pydantic
-import smtplib
 
 # Carregando arquivo de acesso do email
 load_dotenv('Echo/email.env')
@@ -170,7 +167,7 @@ def renderizar_card(ativo: AtivoRede):
                     rx.badge(ativo.status, color_scheme=cor_borda),
                     rx.cond(
                         ativo.status != "Offline",
-                        rx.text(f"{ativo.latencia} ms", font_weight="bold", size="4"),
+                        rx.text(f"{ativo.latencia:.0f} ms", font_weight="bold", size="4"),
                     ),
                     align_items="end"
                 ),

@@ -9,3 +9,4 @@ json
 os
 pydantic
 resend
+reflex==0.8.28
