@@ -8,14 +8,20 @@ import json
 import os
 import pydantic
 
+# Criação do arquivo email.env se não existir
+if not os.path.exists("Echo/email.env"):
+    print("Arquivo email.env nao encontrado. Criando arquivo de exemplo...")
+    with open("Echo/email.env", "w", encoding="utf-8") as f:
+        f.write("SMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=sua_senha_segura_aqui")
+
 # Carregando arquivo de acesso do email
-load_dotenv('Echo/email.env')
+load_dotenv("Echo/email.env")
 
 # Configurações do Brevo
-SMTP_SERVER = "smtp-relay.brevo.com"
-SMTP_PORT = 587
-SMTP_LOGIN = os.environ.get("BREVO_SMTP_LOGIN")
-SMTP_PASSWORD = os.environ.get("BREVO_SMTP_PASSWORD")
+SMTP_SERVER = os.environ.get("SMTP_SERVER")
+SMTP_PORT = int(os.environ.get("SMTP_PORT"))
+SMTP_LOGIN = os.environ.get("SMTP_LOGIN")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 
 # Configurações
 INTERVALO_SEGUNDOS = 10
@@ -35,11 +41,23 @@ class AtivoRede(pydantic.BaseModel):
 def carregar_ativos():
     if os.path.exists('Echo/ips.json'):
         print("Carregando ativos de ips.json...")
+
         with open('Echo/ips.json', 'r', encoding='utf-8') as f:
             dados = json.load(f)
             return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in dados]
-    
-    return [AtivoRede(nome="Configurar ips.json", ip="127.0.0.1", local="N/A")]
+    else:
+        print("Arquivo ips.json não encontrado. Criando arquivo de exemplo...")
+
+        os.makedirs('Echo', exist_ok=True)
+
+        with open('Echo/ips.json', 'w', encoding='utf-8') as f:
+            exemplo = [
+                {"nome": "Google", "ip": "8.8.8.8", "local": "N/A"},
+                {"nome": "Cloudflare", "ip": "1.1.1.1", "local": "N/A"}
+            ]
+            json.dump(exemplo, f)
+
+        return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in exemplo]
 
 # --- ESTADO DE MONITORAMENTO ---
 class EchoState(rx.State):
