@@ -6,3 +6,4 @@ assets/external/
 *.py[cod]
 ips.json
 *.env
+*.json

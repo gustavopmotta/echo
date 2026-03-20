@@ -51,20 +51,100 @@ def carregar_ativos():
         os.makedirs('Echo', exist_ok=True)
 
         with open('Echo/ips.json', 'w', encoding='utf-8') as f:
-            exemplo = [
-                {"nome": "Google", "ip": "8.8.8.8", "local": "N/A"},
-                {"nome": "Cloudflare", "ip": "1.1.1.1", "local": "N/A"}
-            ]
+            exemplo = [{"nome": "Google", "ip": "8.8.8.8", "local": "N/A"},{"nome": "Cloudflare", "ip": "1.1.1.1", "local": "N/A"}]
             json.dump(exemplo, f)
 
         return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in exemplo]
+
+# Processamento de emails a partir do arquivo emails.json
+def carregar_emails():
+    if os.path.exists('Echo/emails.json'):
+        print("Carregando emails de emails.json...")
+        with open('Echo/emails.json', 'r', encoding='utf-8') as f:
+            # Retorna diretamente a lista de strings
+            return json.load(f) 
+    else:
+        print("Arquivo emails.json não encontrado. Criando arquivo de exemplo...")
+        os.makedirs('Echo', exist_ok=True)
+        exemplo = ["exemplo@dominio.com"] # Formato simplificado
+        with open('Echo/emails.json', 'w', encoding='utf-8') as f:
+            json.dump(exemplo, f)
+        return exemplo
 
 # --- ESTADO DE MONITORAMENTO ---
 class EchoState(rx.State):
     # Configurações iniciais
     ativos: list[AtivoRede] = carregar_ativos()
+    ativos_buffer: list[dict[str, str]] = []
     monitorando: bool = False
     
+    emails: list[str] = carregar_emails()
+    novo_email_input: str = ""
+
+    def set_novo_email(self, valor: str):
+        self.novo_email_input = valor.strip()
+
+    def adicionar_email(self):
+        if self.novo_email_input and self.novo_email_input not in self.emails:
+            self.emails.append(self.novo_email_input)
+            self.novo_email_input = ""
+            self.salvar_emails()
+
+    def remover_email(self, email_alvo: str):
+        if email_alvo in self.emails:
+            self.emails.remove(email_alvo)
+            self.salvar_emails()
+
+    def salvar_emails(self):
+        with open('Echo/emails.json', 'w', encoding='utf-8') as f:
+            json.dump(self.emails, f)
+
+    def carregar_ativos_buffer(self):
+        self.ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in self.ativos]
+
+    # Inputs temporários do modal
+    novo_ativo_nome: str = ""
+    novo_ativo_ip: str = ""
+    novo_ativo_local: str = ""
+        
+    def adicionar_ativo_buffer(self):
+        """Adiciona à lista temporária (não salva no json ainda)"""
+        if self.novo_ativo_nome and self.novo_ativo_ip and self.novo_ativo_local:
+            self.ativos_buffer.append({
+                "nome": self.novo_ativo_nome.strip(),
+                "ip": self.novo_ativo_ip.strip(),
+                "local": self.novo_ativo_local.strip()
+            })
+            # Limpa os inputs
+            self.novo_ativo_nome = ""
+            self.novo_ativo_ip = ""
+            self.novo_ativo_local = ""
+            
+    def remover_ativo_buffer(self, ip_alvo: str):
+        """Remove da lista temporária com base no IP"""
+        self.ativos_buffer = [a for a in self.ativos_buffer if a["ip"] != ip_alvo]
+        
+    def salvar_ativos(self):
+        """Salva as modificações, reescreve o json e atualiza a interface"""
+        # 1. Salva no arquivo JSON
+        with open('Echo/ips.json', 'w', encoding='utf-8') as f:
+            json.dump(self.ativos_buffer, f)
+            
+        # 2. Recria a lista oficial de Ativos da interface (limpando o histórico)
+        novos_ativos = []
+        for item in self.ativos_buffer:
+            novos_ativos.append(AtivoRede(
+                nome=item['nome'], 
+                ip=item['ip'], 
+                local=item['local'],
+                status="Aguardando...",
+                latencia=0.0,
+                historico=[]
+            ))
+        
+        # 3. Atualiza os cards da interface
+        self.ativos = novos_ativos
+
     # Loop de ping para monitoramento contínuo
     @rx.event(background=True)
     async def loop_monitoramento(self):
@@ -204,7 +284,7 @@ def index() -> rx.Component:
     return rx.box(
         rx.vstack(
             # Titulo do painel
-            rx.heading("ECHO.", size="8", margin_bottom="1em"),
+            rx.heading("ECHO", size="9"),
             
             # Botões de controle
             rx.hstack(
@@ -212,16 +292,117 @@ def index() -> rx.Component:
                     rx.icon("play"), 
                     on_click=EchoState.loop_monitoramento, 
                     color_scheme="green",
-                    disabled=EchoState.monitorando
+                    disabled=EchoState.monitorando,
+                    variant="soft"
                 ),
                 rx.button(
                     rx.icon("pause"), 
                     on_click=EchoState.parar_monitoramento, 
                     color_scheme="red",
-                    disabled=~EchoState.monitorando
+                    disabled=~EchoState.monitorando,
+                    variant="soft"
                 ),
-                rx.button(
-                    rx.icon("pencil")
+                
+                # Configuração de emails
+                rx.dialog.root(
+                    rx.dialog.trigger(rx.button(rx.icon("mails"), color_scheme="blue",variant="soft"), disabled=EchoState.monitorando),
+
+                    rx.dialog.content(
+                        rx.dialog.title("Cadastro de Emails"),
+                        rx.dialog.description("Gerencie os emails que receberão os alertas de status dos ativos."),
+
+                        rx.divider(margin_y="1em"),
+
+                        rx.vstack(
+                            # Lista de emails atuais
+                            rx.foreach(
+                                EchoState.emails, 
+                                lambda email: rx.card(rx.hstack(
+                                    rx.text(email, width="100%"),
+                                    rx.button(rx.icon("trash"), on_click=EchoState.remover_email(email), color_scheme="red", variant="ghost"),
+                                    width="100%",
+                                    align_items="center",
+                                ))
+                            ),
+                            rx.divider(margin_y="1em"),
+                            
+                            rx.card(
+                                rx.text("Adicionar novo email:", size="3", font_weight="bold", padding_bottom="0.5em"),
+                                rx.hstack(
+                                    rx.input(
+                                        placeholder="novo@dominio.com", 
+                                        on_change=EchoState.set_novo_email, 
+                                        value=EchoState.novo_email_input,
+                                        width="100%"
+                                    ),
+                                    rx.button(rx.icon("plus"), on_click=EchoState.adicionar_email, color_scheme="green"),
+                                    width="100%"
+                                ),
+                            ),
+                            align_items="stretch",
+                            width="100%",
+                        ),
+                        
+                        rx.dialog.close(
+                            rx.button("Fechar", margin_top="1em", width="100%", variant="soft")
+                        ),
+                    ),
+                ),
+
+                # Configuração de ativos
+                rx.dialog.root(
+                    rx.dialog.trigger(
+                        rx.button(
+                            rx.icon("settings"), 
+                                color_scheme="orange", 
+                                variant="soft", 
+                                disabled=EchoState.monitorando,
+                                on_click=EchoState.carregar_ativos_buffer
+                            )
+                        ),
+
+                    rx.dialog.content(
+                        rx.dialog.title("Gerenciar Ativos de Rede"),
+                        rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado durante a edição."),
+                        
+                        rx.vstack(
+                            # Lista de ativos no buffer
+                            rx.foreach(
+                                EchoState.ativos_buffer, 
+                                lambda ativo: rx.hstack(
+                                    rx.vstack(
+                                        rx.text(ativo["nome"], font_weight="bold"),
+                                        rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
+                                        spacing="0",
+                                        align_items="start",
+                                        width="100%"
+                                    ),
+                                    rx.button(rx.icon("trash"), on_click=EchoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="ghost"),
+                                    width="100%",
+                                    align_items="center",
+                                    border_bottom="1px solid var(--gray-4)",
+                                    padding_y="0.5em"
+                                )
+                            ),
+                            
+                            rx.divider(margin_y="1em"),
+                            rx.text("Adicionar Novo Ativo", font_weight="bold"),
+                            
+                            # Inputs para novo ativo
+                            rx.hstack(
+                                rx.input(placeholder="Nome (Google)", on_change=lambda valor: setattr(EchoState, 'novo_ativo_nome', valor), value=EchoState.novo_ativo_nome),
+                                rx.input(placeholder="IP (8.8.8.8)", on_change=lambda valor: setattr(EchoState, 'novo_ativo_ip', valor), value=EchoState.novo_ativo_ip),
+                                rx.input(placeholder="Local (Global)", on_change=lambda valor: setattr(EchoState, 'novo_ativo_local', valor), value=EchoState.novo_ativo_local),
+                                rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
+                                width="100%"
+                            ),
+                            align_items="stretch",
+                            width="100%",
+                        ),
+                        
+                        # Botões de Ação do Modal
+                        rx.button("Salvar e Atualizar", on_click=EchoState.salvar_ativos, color_scheme="blue", justify_self="end"),
+                    ),
                 ),
             ),
             
