@@ -312,105 +312,112 @@ def index() -> rx.Component:
                     variant="soft"
                 ),
                 
-                # Configuração de emails
+                # Configurações gerais
                 rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("mails"), color_scheme="blue",variant="soft"), disabled=EchoState.monitorando),
+                    rx.dialog.trigger(rx.button(rx.icon("settings"), color_scheme="blue",variant="soft"), disabled=EchoState.monitorando),
 
                     rx.dialog.content(
-                        rx.dialog.title("Cadastro de Emails"),
-                        rx.dialog.description("Gerencie os emails que receberão os alertas de status dos ativos."),
-
-                        rx.divider(margin_y="1em"),
-
-                        rx.vstack(
-                            # Lista de emails atuais
-                            rx.foreach(
-                                EchoState.emails, 
-                                lambda email: rx.card(rx.hstack(
-                                    rx.text(email, width="100%"),
-                                    rx.button(rx.icon("trash"), on_click=EchoState.remover_email(email), color_scheme="red", variant="ghost"),
-                                    width="100%",
-                                    align_items="center",
-                                ))
+                        rx.tabs.root(
+                            rx.tabs.list(
+                                rx.tabs.trigger("Gerenciar Emails", value="emails", color_scheme="orange"),
+                                rx.tabs.trigger("Gerenciar Ativos", value="ativos", color_scheme="blue"),
                             ),
-                            rx.divider(margin_y="1em"),
-                            
-                            rx.card(
-                                rx.text("Adicionar novo email:", size="3", font_weight="bold", padding_bottom="0.5em"),
-                                rx.hstack(
-                                    rx.input(
-                                        placeholder="novo@dominio.com", 
-                                        on_change=EchoState.set_novo_email, 
-                                        value=EchoState.novo_email_input,
-                                        width="100%"
+
+                            # --- Configurações de Emails ---
+                            rx.tabs.content(
+                                rx.dialog.title("Cadastro de Emails", padding_top="1em"),
+                                rx.dialog.description("Gerencie os emails que receberão os alertas de status dos ativos."),
+
+                                rx.divider(margin_y="1em"),
+
+                                rx.vstack(
+                                    # Lista de emails atuais
+                                    rx.foreach(
+                                        EchoState.emails, 
+                                        lambda email: rx.card(
+                                            rx.hstack(
+                                                rx.text(email, width="100%"),
+                                                rx.button(rx.icon("trash"), on_click=EchoState.remover_email(email), color_scheme="red",        variant="ghost"),
+                                                width="100%",
+                                                align_items="center",
+                                            ),
+                                        )
                                     ),
-                                    rx.button(rx.icon("plus"), on_click=EchoState.adicionar_email, color_scheme="green"),
-                                    width="100%"
+                                    rx.divider(margin_y="1em"),
+
+                                    rx.card(
+                                        rx.text("Adicionar novo email:", size="3", font_weight="bold", padding_bottom="0.5em"),
+                                        rx.hstack(
+                                            rx.input(
+                                                placeholder="novo@dominio.com", 
+                                                on_change=EchoState.set_novo_email, 
+                                                value=EchoState.novo_email_input,
+                                                width="100%"
+                                            ),
+                                            rx.button(rx.icon("plus"), on_click=EchoState.adicionar_email, color_scheme="green"),
+                                            width="100%"
+                                        ),
+                                    ),
+                                    align_items="stretch",
+                                    width="100%",
                                 ),
+
+                                value="emails"
                             ),
-                            align_items="stretch",
-                            width="100%",
-                        ),
-                        
-                        rx.dialog.close(
-                            rx.button("Fechar", margin_top="1em", width="100%", variant="soft")
-                        ),
-                    ),
-                ),
 
-                # Configuração de ativos
-                rx.dialog.root(
-                    rx.dialog.trigger(
-                        rx.button(
-                            rx.icon("settings"), 
-                                color_scheme="orange", 
-                                variant="soft", 
-                                disabled=EchoState.monitorando,
-                                on_click=EchoState.carregar_ativos_buffer
-                            )
-                        ),
+                            # --- Configurações de Ativos ---
+                            rx.tabs.content(
+                                rx.dialog.title("Gerenciar Ativos de Rede", padding_top="1em"),
+                                rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado durante a edição."),
 
-                    rx.dialog.content(
-                        rx.dialog.title("Gerenciar Ativos de Rede"),
-                        rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado durante a edição."),
-                        
-                        rx.vstack(
-                            # Lista de ativos no buffer
-                            rx.foreach(
-                                EchoState.ativos_buffer, 
-                                lambda ativo: rx.hstack(
-                                    rx.vstack(
-                                        rx.text(ativo["nome"], font_weight="bold"),
-                                        rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
-                                        spacing="0",
-                                        align_items="start",
+                                rx.divider(margin_y="1em"),
+
+                                rx.vstack(
+                                    # Lista de ativos no buffer
+                                    rx.foreach(
+                                        EchoState.ativos_buffer, 
+                                        lambda ativo: rx.card(
+                                            rx.hstack(
+                                                rx.vstack(
+                                                    rx.text(ativo["nome"], font_weight="bold"),
+                                                    rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
+                                                    spacing="0",
+                                                    align_items="start",
+                                                    width="100%"
+                                                ),
+
+                                                rx.button(rx.icon("trash"), on_click=EchoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="ghost"),
+
+                                                width="100%",
+                                                align_items="center",
+                                            ),
+
+                                            border_top="4px solid var(--blue-7)",
+                                        )
+                                    ),
+
+                                    rx.divider(margin_y="1em"),
+                                    rx.text("Adicionar Novo Ativo", font_weight="bold"),
+                                    # Inputs para novo ativo
+                                    rx.hstack(
+                                        rx.input(placeholder="Nome (Google)", on_change=EchoState.set_novo_ativo_nome,value=EchoState.novo_ativo_nome),
+                                        rx.input(placeholder="IP (8.8.8.8)", on_change=EchoState.set_novo_ativo_ip,value=EchoState.novo_ativo_ip),
+                                        rx.input(placeholder="Local (Global)", on_change=EchoState.set_novo_ativo_local,value=EchoState.novo_ativo_local),
+                                        rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
                                         width="100%"
                                     ),
-                                    rx.button(rx.icon("trash"), on_click=EchoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="ghost"),
+                                    align_items="stretch",
                                     width="100%",
-                                    align_items="center",
-                                    border_bottom="1px solid var(--gray-4)",
-                                    padding_y="0.5em"
-                                )
+                                    padding_bottom="1em",
+                                ),
+                                # Botões de Ação do Modal
+                                rx.button("Salvar e Atualizar", on_click=EchoState.salvar_ativos, color_scheme="blue",justify_self="end", width="100%"),
+
+                                value="ativos"
                             ),
-                            
-                            rx.divider(margin_y="1em"),
-                            rx.text("Adicionar Novo Ativo", font_weight="bold"),
-                            
-                            # Inputs para novo ativo
-                            rx.hstack(
-                                rx.input(placeholder="Nome (Google)", on_change=EchoState.set_novo_ativo_nome, value=EchoState.novo_ativo_nome),
-                                rx.input(placeholder="IP (8.8.8.8)", on_change=EchoState.set_novo_ativo_ip, value=EchoState.novo_ativo_ip),
-                                rx.input(placeholder="Local (Global)", on_change=EchoState.set_novo_ativo_local, value=EchoState.novo_ativo_local),
-                                rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
-                                width="100%"
-                            ),
-                            align_items="stretch",
-                            width="100%",
                         ),
-                        
-                        # Botões de Ação do Modal
-                        rx.button("Salvar e Atualizar", on_click=EchoState.salvar_ativos, color_scheme="blue", justify_self="end"),
+
+                        width="30%",
                     ),
                 ),
             ),
@@ -430,7 +437,7 @@ def index() -> rx.Component:
 
         width="100%",
         height="100%",
-    )
+    ),
 
 # --- CONFIGURAÇÃO DO APP ---
 app = rx.App()
