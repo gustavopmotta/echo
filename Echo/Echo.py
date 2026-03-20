@@ -106,6 +106,15 @@ class EchoState(rx.State):
     novo_ativo_nome: str = ""
     novo_ativo_ip: str = ""
     novo_ativo_local: str = ""
+
+    def set_novo_ativo_nome(self, valor: str):
+        self.novo_ativo_nome = valor
+
+    def set_novo_ativo_ip(self, valor: str):
+        self.novo_ativo_ip = valor
+
+    def set_novo_ativo_local(self, valor: str):
+        self.novo_ativo_local = valor
         
     def adicionar_ativo_buffer(self):
         """Adiciona à lista temporária (não salva no json ainda)"""
@@ -390,9 +399,9 @@ def index() -> rx.Component:
                             
                             # Inputs para novo ativo
                             rx.hstack(
-                                rx.input(placeholder="Nome (Google)", on_change=lambda valor: setattr(EchoState, 'novo_ativo_nome', valor), value=EchoState.novo_ativo_nome),
-                                rx.input(placeholder="IP (8.8.8.8)", on_change=lambda valor: setattr(EchoState, 'novo_ativo_ip', valor), value=EchoState.novo_ativo_ip),
-                                rx.input(placeholder="Local (Global)", on_change=lambda valor: setattr(EchoState, 'novo_ativo_local', valor), value=EchoState.novo_ativo_local),
+                                rx.input(placeholder="Nome (Google)", on_change=EchoState.set_novo_ativo_nome, value=EchoState.novo_ativo_nome),
+                                rx.input(placeholder="IP (8.8.8.8)", on_change=EchoState.set_novo_ativo_ip, value=EchoState.novo_ativo_ip),
+                                rx.input(placeholder="Local (Global)", on_change=EchoState.set_novo_ativo_local, value=EchoState.novo_ativo_local),
                                 rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
                                 width="100%"
                             ),
