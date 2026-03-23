@@ -81,6 +81,8 @@ class EchoState(rx.State):
     emails: list[str] = carregar_emails()
     novo_email_input: str = ""
 
+    ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in ativos]
+
     def set_novo_email(self, valor: str):
         self.novo_email_input = valor.strip()
 
@@ -98,9 +100,6 @@ class EchoState(rx.State):
     def salvar_emails(self):
         with open('Echo/emails.json', 'w', encoding='utf-8') as f:
             json.dump(self.emails, f)
-
-    def carregar_ativos_buffer(self):
-        self.ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in self.ativos]
 
     # Inputs temporários do modal
     novo_ativo_nome: str = ""
@@ -314,7 +313,7 @@ def index() -> rx.Component:
                 
                 # Configurações gerais
                 rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("settings"), color_scheme="blue",variant="soft"), disabled=EchoState.monitorando),
+                    rx.dialog.trigger(rx.button(rx.icon("settings"), color_scheme="blue", variant="soft"), disabled=EchoState.monitorando),
 
                     rx.dialog.content(
                         rx.tabs.root(
@@ -337,7 +336,7 @@ def index() -> rx.Component:
                                         lambda email: rx.card(
                                             rx.hstack(
                                                 rx.text(email, width="100%"),
-                                                rx.button(rx.icon("trash"), on_click=EchoState.remover_email(email), color_scheme="red",        variant="ghost"),
+                                                rx.button(rx.icon("trash"), on_click=EchoState.remover_email(email), color_scheme="red", variant="ghost"),
                                                 width="100%",
                                                 align_items="center",
                                             ),
