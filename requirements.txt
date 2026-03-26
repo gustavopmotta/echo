@@ -1,12 +1,9 @@
-reflex
+email
 datetime
 dotenv
+reflex
 icmplib
-platform
-re
 asyncio
 json
 os
 pydantic
-resend
-reflex==0.8.28
