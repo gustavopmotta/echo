@@ -77,6 +77,7 @@ class EchoState(rx.State):
     ativos: list[AtivoRede] = carregar_ativos()
     ativos_buffer: list[dict[str, str]] = []
     monitorando: bool = False
+    ciclo_atual: int = 0
     
     emails: list[str] = carregar_emails()
     novo_email_input: str = ""
@@ -156,31 +157,34 @@ class EchoState(rx.State):
     # Loop de ping para monitoramento contínuo
     @rx.event(background=True)
     async def loop_monitoramento(self):
-        # Verificação inicial para evitar múltiplas execuções simultâneas
+        # 1. Cria um RG único para este loop
         async with self:
             if self.monitorando:
                 return
             self.monitorando = True
+            self.ciclo_atual += 1
+            meu_ciclo = self.ciclo_atual 
         
         while True:
-            # Cópia dos ativos para evitar bloqueios durante a atualização
+            # 2. Verifica se foi pausado OU se outro loop tomou o lugar
             async with self:
-                if not self.monitorando:
+                if not self.monitorando or self.ciclo_atual != meu_ciclo:
                     break
                 ativos_atuais = self.ativos.copy()
             
             ativos_atualizados = []
             hora_atual = datetime.now().strftime("%H:%M:%S")
             
-            # Criação de novos ativos com status e latência atualizados
             for ativo in ativos_atuais:
-                latencia_ms = icmplib.ping(ativo.ip, count=1, timeout=2).avg_rtt
+                # 3. USANDO ASYNC_PING PARA NÃO TRAVAR O SISTEMA
+                resultado = await icmplib.async_ping(ativo.ip, count=1, timeout=2)
+                latencia_ms = resultado.avg_rtt
                 
                 novo_status = "Aguardando..."
                 nova_latencia = 0.0
                 
                 # Estados de latência
-                if latencia_ms is None:
+                if not resultado.is_alive: # async_ping verifica se está vivo assim
                     novo_status = "Offline"
                     nova_latencia = 0.0
                 elif latencia_ms > LIMITE_LATENCIA_MS:
@@ -207,9 +211,9 @@ class EchoState(rx.State):
                 
                 ativos_atualizados.append(novo_ativo)
             
-            # Atualização dos ativos na interface
+            # 4. Segunda verificação de segurança antes de atualizar a tela
             async with self:
-                if not self.monitorando:
+                if not self.monitorando or self.ciclo_atual != meu_ciclo:
                     break
                 self.ativos = ativos_atualizados
             
@@ -218,6 +222,8 @@ class EchoState(rx.State):
     # Pausar monitoramento e reiniciar ativos para estado inicial   
     def parar_monitoramento(self):
         self.monitorando = False
+        self.ciclo_atual += 1
+
         ativos_resetados = []
         for ativo in self.ativos:
             ativo_limpo = AtivoRede(
