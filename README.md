@@ -12,10 +12,10 @@ O Echo é uma ferramenta de código aberto desenvolvida em Python para monitorar
 * Monitoramento Contínuo: Dispara testes de latência (ping) em intervalos regulares configuráveis.
 * Dashboard Dinâmico: Interface web responsiva que atualiza automaticamente sem necessidade de recarregar a página.
 * Indicadores Visuais: Classificação automática do status de cada ativo:
-  * <span style="color:green">Online:</span> Conexão estável e latência normal.
-  * <span style="color:darkorange">Lento:</span> O equipamento responde, mas o tempo de resposta está acima do limite aceitável.
-  * <span style="color:darkred">Offline:</span> Falha na comunicação ou perda de pacotes.
-  * <span style="color:gray">Aguardando:</span> Sistema em pausa ou aguardando o primeiro ciclo de testes.
+   * Conexão estável e latência normal.
+   * O equipamento responde, mas o tempo de resposta está acima do limite aceitável.
+   * Falha na comunicação ou perda de pacotes.
+   * Sistema em pausa ou aguardando o primeiro ciclo de testes.
 * Lista de Ativos Customizável: Gerenciamento seguro de quais IPs monitorar através de um arquivo JSON externo, garantindo que dados sensíveis da sua rede não sejam expostos no código-fonte.
 * Controles de Execução: Botões integrados na interface para iniciar e pausar o ciclo de monitoramento a qualquer momento.
 
@@ -40,23 +40,8 @@ Para executar o projeto, você precisará ter instalado em sua máquina:
 4. Instale as dependências:
    pip install `requirements.txt`
 
-5. Configuração dos Ativos:
-   * Localize o arquivo `ips-example.json` na raiz do projeto.
-   * Renomeie este arquivo para `ips.json`.
-   * Edite o arquivo inserindo os nomes e endereços IP reais dos equipamentos que você deseja monitorar na sua rede.
-
-6. Inicialize o servidor web:
+5. Inicialize o servidor web:
    `reflex run`
 
-7. Acesse o painel:
+6. Acesse o painel:
    Abra o seu navegador e acesse http://localhost:3000
-
-## Estrutura do Arquivo de Configuração (ips.json)
-
-O sistema espera ler um array de objetos JSON contendo as chaves "nome" e "ip", conforme o exemplo abaixo:
-```json
-[
-    {"nome": "Roteador Principal", "ip": "192.168.0.1", "local": "Sala de Estar"},
-    {"nome": "Internet", "ip": "8.8.8.8", "local": "N/A"}
-]
-

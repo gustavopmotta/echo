@@ -1,4 +1,3 @@
-from email.mime.text import MIMEText
 from datetime import datetime
 from dotenv import load_dotenv
 import reflex as rx
@@ -7,6 +6,8 @@ import asyncio
 import json
 import os
 import pydantic
+import smtplib
+import email
 
 # Criação do arquivo email.env se não existir
 if not os.path.exists("Echo/email.env"):
@@ -17,7 +18,7 @@ if not os.path.exists("Echo/email.env"):
 # Carregando arquivo de acesso do email
 load_dotenv("Echo/email.env")
 
-# Configurações do Brevo
+# Configurações de Dominio
 SMTP_SERVER = os.environ.get("SMTP_SERVER")
 SMTP_PORT = int(os.environ.get("SMTP_PORT"))
 SMTP_LOGIN = os.environ.get("SMTP_LOGIN")
@@ -27,6 +28,7 @@ SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 INTERVALO_SEGUNDOS = 10
 LIMITE_LATENCIA_MS = 100.0
 PINGS_MAXIMOS = 12
+FREQUENCIA_EMAILS = 60
 
 # Estrutura do ativo de rede
 class AtivoRede(pydantic.BaseModel):
@@ -34,8 +36,27 @@ class AtivoRede(pydantic.BaseModel):
     ip: str
     local: str
     latencia: float = 0.0
+    latencia_total: float = 0.0
+    qnt_pings: int = 0
     status: str = "Aguardando..."
     historico: list[dict[str, str | float]] = []
+
+# Disparo de relatórios por email
+def disparar_relatorio(corpo_html: str):
+    msg = email.mime.multipart.MIMEMultipart()
+    msg['Subject'] = "Relatório Diário de Desempenho - Echo"
+    msg['From'] = SMTP_LOGIN
+    msg['To'] = ", ".join(EchoState.emails)
+    msg.attach(email.mime.text.MIMEText(corpo_html, 'html'))
+
+    try:
+        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+        server.login(SMTP_LOGIN, SMTP_PASSWORD)
+        server.sendmail(SMTP_LOGIN, EchoState.emails, msg.as_string())
+        server.quit()
+        print("Relatório diário enviado com sucesso!")
+    except Exception as e:
+        print(f"Erro ao enviar relatório: {e}")
 
 # Processamento de ativos a partir do arquivo ips.json
 def carregar_ativos():
@@ -61,12 +82,11 @@ def carregar_emails():
     if os.path.exists('Echo/emails.json'):
         print("Carregando emails de emails.json...")
         with open('Echo/emails.json', 'r', encoding='utf-8') as f:
-            # Retorna diretamente a lista de strings
             return json.load(f) 
     else:
         print("Arquivo emails.json não encontrado. Criando arquivo de exemplo...")
         os.makedirs('Echo', exist_ok=True)
-        exemplo = ["exemplo@dominio.com"] # Formato simplificado
+        exemplo = ["exemplo@dominio.com"]
         with open('Echo/emails.json', 'w', encoding='utf-8') as f:
             json.dump(exemplo, f)
         return exemplo
@@ -148,6 +168,8 @@ class EchoState(rx.State):
                 local=item['local'],
                 status="Aguardando...",
                 latencia=0.0,
+                latencia_total=0.0,
+                qnt_pings=0,
                 historico=[]
             ))
         
@@ -155,6 +177,73 @@ class EchoState(rx.State):
         self.ativos = novos_ativos
 
     # Loop de ping para monitoramento contínuo
+    @rx.event(background=True)
+    async def loop_relatorio_diario(self):
+        while True:
+            await asyncio.sleep(FREQUENCIA_EMAILS)
+            
+            async with self:
+                if not self.monitorando or not self.ativos:
+                    continue
+                
+                linhas_tabela = ""
+                ativos_zerados = []
+                
+                for ativo in self.ativos:
+                    # 1. O Cálculo da Média Segura (evitando divisão por zero)
+                    if ativo.qnt_pings > 0:
+                        media = ativo.latencia_total / ativo.qnt_pings
+                    else:
+                        media = 0.0
+                    
+                    # 2. Monta a linha do HTML
+                    linhas_tabela += f"""
+                    <tr style="text-align: center;">
+                        <td style="padding: 8px; border: 1px solid #ddd; text-align: left;"><b>{ativo.nome}</b></td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">{ativo.ip}</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">{ativo.qnt_pings}</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">{media:.0f} ms</td>
+                    </tr>
+                    """
+                    
+                    # 3. Prepara o ativo zerado para o novo dia
+                    ativo_limpo = AtivoRede(
+                        nome=ativo.nome,
+                        ip=ativo.ip,
+                        local=ativo.local,
+                        status=ativo.status,
+                        latencia=ativo.latencia,
+                        historico=ativo.historico,
+                        latencia_total=0.0,
+                        qnt_pings=0
+                    )
+                    ativos_zerados.append(ativo_limpo)
+
+                # Atualiza a interface com os ativos zerados para o próximo dia
+                self.ativos = ativos_zerados
+                
+                # Monta a estrutura do email
+                html_final = f"""
+                <html>
+                  <body style="font-family: Arial, sans-serif; color: #333;">
+                    <h2 style="color: #0056b3;">Fechamento Diário - Echo</h2>
+                    <p>Abaixo estão as médias de latência consolidadas das últimas 24 horas.</p>
+                    <table style="border-collapse: collapse; width: 100%; max-width: 700px;">
+                        <tr style="background-color: #f2f2f2;">
+                            <th style="padding: 8px; border: 1px solid #ddd;">Equipamento</th>
+                            <th style="padding: 8px; border: 1px solid #ddd;">IP</th>
+                            <th style="padding: 8px; border: 1px solid #ddd;">Pings Bem-Sucedidos</th>
+                            <th style="padding: 8px; border: 1px solid #ddd;">Média de Latência</th>
+                        </tr>
+                        {linhas_tabela}
+                    </table>
+                  </body>
+                </html>
+                """
+                
+            # Dispara o email (fora do bloco async with self para não congelar o painel)
+            disparar_relatorio(html_final, self.emails)
+
     @rx.event(background=True)
     async def loop_monitoramento(self):
         # 1. Cria um RG único para este loop
@@ -206,6 +295,8 @@ class EchoState(rx.State):
                     local=ativo.local,
                     status=novo_status,
                     latencia=nova_latencia,
+                    latencia_total=ativo.latencia_total + nova_latencia,
+                    qnt_pings=ativo.qnt_pings + 1,
                     historico=novo_historico
                 )
                 
@@ -269,10 +360,10 @@ def renderizar_card(ativo: AtivoRede):
                     rx.flex(
                         rx.text(f"IP: {ativo.ip}", color="gray"),
                         rx.text(f"Local: {ativo.local}", color="gray", size="1"),
-                        spacing="0",
                         direction="column",
                     ),
-                    align_items="start"
+                    align_items="start",
+                    spacing="0",
                 ),
                 rx.spacer(),
                 rx.vstack(
@@ -281,7 +372,7 @@ def renderizar_card(ativo: AtivoRede):
                         ativo.status != "Offline",
                         rx.text(f"{ativo.latencia:.0f} ms", font_weight="bold", size="4"),
                     ),
-                    align_items="end"
+                    align_items="end",
                 ),
                 width="100%"
             ),
@@ -405,9 +496,9 @@ def index() -> rx.Component:
                                     rx.text("Adicionar Novo Ativo", font_weight="bold"),
                                     # Inputs para novo ativo
                                     rx.hstack(
-                                        rx.input(placeholder="Nome (Google)", on_change=EchoState.set_novo_ativo_nome,value=EchoState.novo_ativo_nome),
-                                        rx.input(placeholder="IP (8.8.8.8)", on_change=EchoState.set_novo_ativo_ip,value=EchoState.novo_ativo_ip),
-                                        rx.input(placeholder="Local (Global)", on_change=EchoState.set_novo_ativo_local,value=EchoState.novo_ativo_local),
+                                        rx.input(placeholder="Nome", on_change=EchoState.set_novo_ativo_nome,value=EchoState.novo_ativo_nome),
+                                        rx.input(placeholder="IP", on_change=EchoState.set_novo_ativo_ip,value=EchoState.novo_ativo_ip),
+                                        rx.input(placeholder="Local", on_change=EchoState.set_novo_ativo_local,value=EchoState.novo_ativo_local),
                                         rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
                                         width="100%"
                                     ),
