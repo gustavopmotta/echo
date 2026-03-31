@@ -1,5 +1,7 @@
 from datetime import datetime
 from dotenv import load_dotenv
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import reflex as rx
 import icmplib
 import asyncio
@@ -7,7 +9,6 @@ import json
 import os
 import pydantic
 import smtplib
-import email
 
 # Criação do arquivo email.env se não existir
 if not os.path.exists("Echo/email.env"):
@@ -42,21 +43,86 @@ class AtivoRede(pydantic.BaseModel):
     historico: list[dict[str, str | float]] = []
 
 # Disparo de relatórios por email
-def disparar_relatorio(corpo_html: str):
-    msg = email.mime.multipart.MIMEMultipart()
-    msg['Subject'] = "Relatório Diário de Desempenho - Echo"
-    msg['From'] = SMTP_LOGIN
-    msg['To'] = ", ".join(EchoState.emails)
-    msg.attach(email.mime.text.MIMEText(corpo_html, 'html'))
+def disparar_email_teste(ativos, destinatarios):
+    # Travas de segurança: não tenta enviar se faltar dados
+    if not destinatarios:
+        print("❌ Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
+        return
+    if not ativos:
+        print("⚠️ Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
+        return
 
+    # Puxa as configurações do .env (já carregadas no topo do seu código)
+    servidor = os.environ.get("SMTP_SERVER")
+    porta = int(os.environ.get("SMTP_PORT", 465))
+    login = os.environ.get("SMTP_LOGIN")
+    senha = os.environ.get("SMTP_PASSWORD")
+
+    print("Montando relatório de ativos em HTML...")
+    
+    # 1. Constrói as linhas da tabela dinamicamente com base nos ativos
+    linhas_tabela = ""
+    for ativo in ativos:
+        # Define a cor do texto dependendo do status atual
+        cor_status = "green" if ativo.status == "Online" else "orange" if ativo.status == "Lento" else "red"
+        
+        linhas_tabela += f"""
+        <tr>
+            <td style="padding: 10px; border-bottom: 1px solid #eee;"><b>{ativo.nome}</b></td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.ip}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.local}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee; color: {cor_status}; font-weight: bold;">{ativo.status}</td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.latencia_total/ativo.qnt_pings if ativo.qnt_pings > 0 else 0:.0f} ms</td>
+        </tr>
+        """
+
+    # 2. Constrói a casca do e-mail com a tabela dentro
+    corpo_html = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
+            <h2 style="color: #0056b3;">Echo - Relatório de Teste Manual</h2>
+            <p>Este é um teste de comunicação disparado manualmente pelo sistema Echo. Abaixo está o retrato do exato momento em que o teste foi solicitado:</p>
+            
+            <table style="border-collapse: collapse; width: 100%; max-width: 800px; text-align: left; margin-top: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                <tr style="background-color: #f4f6f8;">
+                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Nome do Equipamento</th>
+                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Endereço IP</th>
+                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Localização</th>
+                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Status Atual</th>
+                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Latência</th>
+                </tr>
+                {linhas_tabela}
+            </table>
+            
+            <p style="margin-top: 30px; font-size: 12px; color: #777;">
+                Mensagem gerada automaticamente pelo painel de monitoramento Reflex.
+            </p>
+        </body>
+    </html>
+    """
+
+    # 3. Configura os cabeçalhos do e-mail
+    msg = MIMEMultipart()
+    msg['Subject'] = "Echo: Status Atual da Rede (Teste de Comunicação)"
+    msg['From'] = login
+    msg['To'] = ", ".join(destinatarios)
+    msg.attach(MIMEText(corpo_html, 'html'))
+
+    # 4. Conecta no servidor e faz o disparo
     try:
-        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
-        server.login(SMTP_LOGIN, SMTP_PASSWORD)
-        server.sendmail(SMTP_LOGIN, EchoState.emails, msg.as_string())
+        print(f"Conectando ao servidor SMTP {servidor} via SSL...")
+        server = smtplib.SMTP_SSL(servidor, porta)
+        
+        print("Autenticando credenciais...")
+        server.login(login, senha)
+        
+        print(f"Disparando e-mail para {len(destinatarios)} destinatário(s)...")
+        server.sendmail(login, destinatarios, msg.as_string())
         server.quit()
-        print("Relatório diário enviado com sucesso!")
+        
+        print("✅ E-mail de teste enviado e entregue com sucesso!")
     except Exception as e:
-        print(f"Erro ao enviar relatório: {e}")
+        print(f"❌ Falha crítica ao enviar o e-mail: {e}")
 
 # Processamento de ativos a partir do arquivo ips.json
 def carregar_ativos():
@@ -97,6 +163,7 @@ class EchoState(rx.State):
     ativos: list[AtivoRede] = carregar_ativos()
     ativos_buffer: list[dict[str, str]] = []
     monitorando: bool = False
+    loop_relatorio_ativo: bool = False
     ciclo_atual: int = 0
     
     emails: list[str] = carregar_emails()
@@ -175,74 +242,6 @@ class EchoState(rx.State):
         
         # 3. Atualiza os cards da interface
         self.ativos = novos_ativos
-
-    # Loop de ping para monitoramento contínuo
-    @rx.event(background=True)
-    async def loop_relatorio_diario(self):
-        while True:
-            await asyncio.sleep(FREQUENCIA_EMAILS)
-            
-            async with self:
-                if not self.monitorando or not self.ativos:
-                    continue
-                
-                linhas_tabela = ""
-                ativos_zerados = []
-                
-                for ativo in self.ativos:
-                    # 1. O Cálculo da Média Segura (evitando divisão por zero)
-                    if ativo.qnt_pings > 0:
-                        media = ativo.latencia_total / ativo.qnt_pings
-                    else:
-                        media = 0.0
-                    
-                    # 2. Monta a linha do HTML
-                    linhas_tabela += f"""
-                    <tr style="text-align: center;">
-                        <td style="padding: 8px; border: 1px solid #ddd; text-align: left;"><b>{ativo.nome}</b></td>
-                        <td style="padding: 8px; border: 1px solid #ddd;">{ativo.ip}</td>
-                        <td style="padding: 8px; border: 1px solid #ddd;">{ativo.qnt_pings}</td>
-                        <td style="padding: 8px; border: 1px solid #ddd;">{media:.0f} ms</td>
-                    </tr>
-                    """
-                    
-                    # 3. Prepara o ativo zerado para o novo dia
-                    ativo_limpo = AtivoRede(
-                        nome=ativo.nome,
-                        ip=ativo.ip,
-                        local=ativo.local,
-                        status=ativo.status,
-                        latencia=ativo.latencia,
-                        historico=ativo.historico,
-                        latencia_total=0.0,
-                        qnt_pings=0
-                    )
-                    ativos_zerados.append(ativo_limpo)
-
-                # Atualiza a interface com os ativos zerados para o próximo dia
-                self.ativos = ativos_zerados
-                
-                # Monta a estrutura do email
-                html_final = f"""
-                <html>
-                  <body style="font-family: Arial, sans-serif; color: #333;">
-                    <h2 style="color: #0056b3;">Fechamento Diário - Echo</h2>
-                    <p>Abaixo estão as médias de latência consolidadas das últimas 24 horas.</p>
-                    <table style="border-collapse: collapse; width: 100%; max-width: 700px;">
-                        <tr style="background-color: #f2f2f2;">
-                            <th style="padding: 8px; border: 1px solid #ddd;">Equipamento</th>
-                            <th style="padding: 8px; border: 1px solid #ddd;">IP</th>
-                            <th style="padding: 8px; border: 1px solid #ddd;">Pings Bem-Sucedidos</th>
-                            <th style="padding: 8px; border: 1px solid #ddd;">Média de Latência</th>
-                        </tr>
-                        {linhas_tabela}
-                    </table>
-                  </body>
-                </html>
-                """
-                
-            # Dispara o email (fora do bloco async with self para não congelar o painel)
-            disparar_relatorio(html_final, self.emails)
 
     @rx.event(background=True)
     async def loop_monitoramento(self):
@@ -328,6 +327,52 @@ class EchoState(rx.State):
             ativos_resetados.append(ativo_limpo)
         self.ativos = ativos_resetados
 
+    @rx.event(background=True)
+    async def loop_relatorio_horario(self):
+        async with self:
+            if getattr(self, "loop_relatorio_ativo", False):
+                return
+            self.loop_relatorio_ativo = True
+
+        while True:
+            await asyncio.sleep(FREQUENCIA_EMAILS)
+
+            async with self:
+                # Só envia se o monitoramento estiver ligado e houver ativos
+                if not self.monitorando or not self.ativos:
+                    continue
+
+                # 2. Prepara os dados para o e-mail e reseta os contadores
+                ativos_para_relatorio = []
+                ativos_zerados_para_proxima_hora = []
+
+                for ativo in self.ativos:
+                    # Calculamos a média da hora atual antes de zerar
+                    media_da_hora = 0.0
+                    if ativo.qnt_pings > 0:
+                        media_da_hora = ativo.latencia_total / ativo.qnt_pings
+                    
+                    # Criamos uma cópia do ativo com a média calculada para a função de e-mail
+                    ativo_relatorio = ativo.model_copy()
+                    ativo_relatorio.latencia = media_da_hora # Usamos o campo latencia para a média no e-mail
+                    ativos_para_relatorio.append(ativo_relatorio)
+
+                    # 3. ZERAMOS os acumuladores no estado oficial para a nova hora
+                    ativo_limpo = ativo.model_copy()
+                    ativo_limpo.latencia_total = 0.0
+                    ativo_limpo.qnt_pings = 0
+                    ativos_zerados_para_proxima_hora.append(ativo_limpo)
+
+                # Atualiza a lista oficial com contadores zerados
+                self.ativos = ativos_zerados_para_proxima_hora
+                destinatarios = self.emails.copy()
+
+            # 4. Dispara o e-mail usando a sua função já existente
+            # Chamamos fora do 'async with self' para não travar a interface
+            if destinatarios:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Enviando relatório horário automático...")
+                disparar_email_teste(ativos_para_relatorio, destinatarios)
+
 # --- CARD ---
 def renderizar_card(ativo: AtivoRede):
     cor_borda = rx.cond(ativo.status == "Online", "green", 
@@ -338,7 +383,7 @@ def renderizar_card(ativo: AtivoRede):
         rx.recharts.bar(
             data_key="latencia",
             is_animation_active=True,
-            fill=rx.color(cor_borda,8),
+            fill=rx.color(cor_borda, 8),
             stroke=rx.color(cor_borda, 10),
             stroke_width=2,
             radius=[4, 4, 0, 0]
@@ -537,4 +582,4 @@ def index() -> rx.Component:
 
 # --- CONFIGURAÇÃO DO APP ---
 app = rx.App()
-app.add_page(index, title="Painel Echo")
+app.add_page(index, title="Painel Echo", on_load=EchoState.loop_relatorio_horario)
