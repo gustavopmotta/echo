@@ -336,7 +336,8 @@ class EchoState(rx.State):
 
         while True:
             await asyncio.sleep(FREQUENCIA_EMAILS)
-
+            print("teste de loop de relatorio horario")
+            
             async with self:
                 # Só envia se o monitoramento estiver ligado e houver ativos
                 if not self.monitorando or not self.ativos:
@@ -460,8 +461,21 @@ def index() -> rx.Component:
                     rx.dialog.content(
                         rx.tabs.root(
                             rx.tabs.list(
+                                rx.tabs.trigger("Configurações", value="config", color_scheme="purple"),
                                 rx.tabs.trigger("Gerenciar Emails", value="emails", color_scheme="orange"),
                                 rx.tabs.trigger("Gerenciar Ativos", value="ativos", color_scheme="blue"),
+                            ),
+
+                            # --- Configurações Gerais ---
+                            rx.tabs.content(
+                                rx.dialog.title("Configurações Gerais", padding_top="1em"),
+                                rx.dialog.description("Configurações gerais do painel como login de email e frequência de envio de relatórios."),
+
+                                rx.divider(margin_y="1em"),
+
+                                rx.text("Em andamento..."),
+
+                                value="config"
                             ),
 
                             # --- Configurações de Emails ---
@@ -538,14 +552,16 @@ def index() -> rx.Component:
                                     ),
 
                                     rx.divider(margin_y="1em"),
-                                    rx.text("Adicionar Novo Ativo", font_weight="bold"),
-                                    # Inputs para novo ativo
-                                    rx.hstack(
-                                        rx.input(placeholder="Nome", on_change=EchoState.set_novo_ativo_nome,value=EchoState.novo_ativo_nome),
-                                        rx.input(placeholder="IP", on_change=EchoState.set_novo_ativo_ip,value=EchoState.novo_ativo_ip),
-                                        rx.input(placeholder="Local", on_change=EchoState.set_novo_ativo_local,value=EchoState.novo_ativo_local),
-                                        rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
-                                        width="100%"
+                                    rx.card(
+                                        rx.text("Adicionar Novo Ativo:", size="3", font_weight="bold", padding_bottom="0.5em"),
+                                        rx.hstack(
+                                            rx.input(placeholder="Nome", on_change=EchoState.set_novo_ativo_nome,value=EchoState.   novo_ativo_nome),
+                                            rx.input(placeholder="IP", on_change=EchoState.set_novo_ativo_ip,value=EchoState.novo_ativo_ip),
+                                            rx.input(placeholder="Local", on_change=EchoState.set_novo_ativo_local,value=EchoState. novo_ativo_local),
+                                            rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
+
+                                            width="100%"
+                                        ),
                                     ),
                                     align_items="stretch",
                                     width="100%",
