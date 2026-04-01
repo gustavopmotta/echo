@@ -8,3 +8,4 @@ json
 os
 pydantic
 smtplib
+reflex==0.8.28.post1

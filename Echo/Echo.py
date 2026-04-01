@@ -10,26 +10,14 @@ import os
 import pydantic
 import smtplib
 
-# Criação do arquivo email.env se não existir
-if not os.path.exists("Echo/email.env"):
-    print("Arquivo email.env nao encontrado. Criando arquivo de exemplo...")
-    with open("Echo/email.env", "w", encoding="utf-8") as f:
-        f.write("SMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=sua_senha_segura_aqui")
+# Criação do arquivo config.env se não existir
+if not os.path.exists("Echo/config.env"):
+    print("Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
+    with open("Echo/config.env", "w", encoding="utf-8") as f:
+        f.write("# Configurações de email\nSMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=suasenha\n# Configurações de monitoramento\nINTERVALO_SEGUNDOS=10\nLIMITE_LATENCIA_MS=100\nPINGS_MAXIMOS=12\nFREQUENCIA_EMAILS=60")
 
 # Carregando arquivo de acesso do email
-load_dotenv("Echo/email.env")
-
-# Configurações de Dominio
-SMTP_SERVER = os.environ.get("SMTP_SERVER")
-SMTP_PORT = int(os.environ.get("SMTP_PORT"))
-SMTP_LOGIN = os.environ.get("SMTP_LOGIN")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-
-# Configurações
-INTERVALO_SEGUNDOS = 10
-LIMITE_LATENCIA_MS = 100.0
-PINGS_MAXIMOS = 12
-FREQUENCIA_EMAILS = 60
+load_dotenv("Echo/config.env")
 
 # Estrutura do ativo de rede
 class AtivoRede(pydantic.BaseModel):
@@ -46,10 +34,10 @@ class AtivoRede(pydantic.BaseModel):
 def disparar_email_teste(ativos, destinatarios):
     # Travas de segurança: não tenta enviar se faltar dados
     if not destinatarios:
-        print("❌ Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
+        print("Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
         return
     if not ativos:
-        print("⚠️ Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
+        print("Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
         return
 
     # Puxa as configurações do .env (já carregadas no topo do seu código)
@@ -80,8 +68,8 @@ def disparar_email_teste(ativos, destinatarios):
     corpo_html = f"""
     <html>
         <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
-            <h2 style="color: #0056b3;">Echo - Relatório de Teste Manual</h2>
-            <p>Este é um teste de comunicação disparado manualmente pelo sistema Echo. Abaixo está o retrato do exato momento em que o teste foi solicitado:</p>
+            <h2 style="color: #0056b3;">Echo - Relatório de Latencia</h2>
+            <p>Segue teste de latencia média de ativos:</p>
             
             <table style="border-collapse: collapse; width: 100%; max-width: 800px; text-align: left; margin-top: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
                 <tr style="background-color: #f4f6f8;">
@@ -89,13 +77,13 @@ def disparar_email_teste(ativos, destinatarios):
                     <th style="padding: 12px; border-bottom: 2px solid #ccc;">Endereço IP</th>
                     <th style="padding: 12px; border-bottom: 2px solid #ccc;">Localização</th>
                     <th style="padding: 12px; border-bottom: 2px solid #ccc;">Status Atual</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Latência</th>
+                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Latência (Média)</th>
                 </tr>
                 {linhas_tabela}
             </table>
             
             <p style="margin-top: 30px; font-size: 12px; color: #777;">
-                Mensagem gerada automaticamente pelo painel de monitoramento Reflex.
+                Mensagem gerada automaticamente pelo painel de monitoramento Echo.
             </p>
         </body>
     </html>
@@ -103,7 +91,7 @@ def disparar_email_teste(ativos, destinatarios):
 
     # 3. Configura os cabeçalhos do e-mail
     msg = MIMEMultipart()
-    msg['Subject'] = "Echo: Status Atual da Rede (Teste de Comunicação)"
+    msg['Subject'] = "Echo: Status Atual da Rede (Teste de Latência)"
     msg['From'] = login
     msg['To'] = ", ".join(destinatarios)
     msg.attach(MIMEText(corpo_html, 'html'))
@@ -112,17 +100,13 @@ def disparar_email_teste(ativos, destinatarios):
     try:
         print(f"Conectando ao servidor SMTP {servidor} via SSL...")
         server = smtplib.SMTP_SSL(servidor, porta)
-        
-        print("Autenticando credenciais...")
         server.login(login, senha)
-        
-        print(f"Disparando e-mail para {len(destinatarios)} destinatário(s)...")
         server.sendmail(login, destinatarios, msg.as_string())
         server.quit()
         
-        print("✅ E-mail de teste enviado e entregue com sucesso!")
+        print("E-mail de teste enviado e entregue com sucesso!")
     except Exception as e:
-        print(f"❌ Falha crítica ao enviar o e-mail: {e}")
+        print(f"Falha crítica ao enviar o e-mail: {e}")
 
 # Processamento de ativos a partir do arquivo ips.json
 def carregar_ativos():
@@ -159,6 +143,18 @@ def carregar_emails():
 
 # --- ESTADO DE MONITORAMENTO ---
 class EchoState(rx.State):
+    # Configurações de Dominio
+    config_smtp_server = os.environ.get("SMTP_SERVER")
+    config_smtp_port = int(os.environ.get("SMTP_PORT"))
+    config_smtp_login = os.environ.get("SMTP_LOGIN")
+    config_smtp_password = os.environ.get("SMTP_PASSWORD")
+
+    # Configurações
+    config_intervalo = int(os.environ.get("INTERVALO_SEGUNDOS", 10))
+    config_limite_latencia = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
+    config_pings_maximos = int(os.environ.get("PINGS_MAXIMOS", 12))
+    config_frequencia_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
+
     # Configurações iniciais
     ativos: list[AtivoRede] = carregar_ativos()
     ativos_buffer: list[dict[str, str]] = []
@@ -167,7 +163,24 @@ class EchoState(rx.State):
     ciclo_atual: int = 0
     
     emails: list[str] = carregar_emails()
+
+    # Inputs temporários do modal
     novo_email_input: str = ""
+    novo_ativo_nome: str = ""
+    novo_ativo_ip: str = ""
+    novo_ativo_local: str = ""
+
+    # Inputs temporários de configurações de dominio
+    novo_smtp_server: str = ""
+    novo_smtp_port: str = ""
+    novo_smtp_login: str = ""
+    novo_smtp_password: str = ""
+
+    # Inputs temporários de configurações de monitoramento
+    nova_limite_latencia: str = ""
+    nova_frequencia_emails: str = ""
+    novo_intervalo: str = ""
+    novo_pings_maximos: str = ""
 
     ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in ativos]
 
@@ -189,29 +202,17 @@ class EchoState(rx.State):
         with open('Echo/emails.json', 'w', encoding='utf-8') as f:
             json.dump(self.emails, f)
 
-    # Inputs temporários do modal
-    novo_ativo_nome: str = ""
-    novo_ativo_ip: str = ""
-    novo_ativo_local: str = ""
-
-    def set_novo_ativo_nome(self, valor: str):
-        self.novo_ativo_nome = valor
-
-    def set_novo_ativo_ip(self, valor: str):
-        self.novo_ativo_ip = valor
-
-    def set_novo_ativo_local(self, valor: str):
-        self.novo_ativo_local = valor
+    def set_novo_attr(self, atributo: str, valor: str):
+        setattr(self, atributo, valor)
         
     def adicionar_ativo_buffer(self):
-        """Adiciona à lista temporária (não salva no json ainda)"""
         if self.novo_ativo_nome and self.novo_ativo_ip and self.novo_ativo_local:
             self.ativos_buffer.append({
                 "nome": self.novo_ativo_nome.strip(),
                 "ip": self.novo_ativo_ip.strip(),
                 "local": self.novo_ativo_local.strip()
             })
-            # Limpa os inputs
+            
             self.novo_ativo_nome = ""
             self.novo_ativo_ip = ""
             self.novo_ativo_local = ""
@@ -245,7 +246,6 @@ class EchoState(rx.State):
 
     @rx.event(background=True)
     async def loop_monitoramento(self):
-        # 1. Cria um RG único para este loop
         async with self:
             if self.monitorando:
                 return
@@ -254,7 +254,6 @@ class EchoState(rx.State):
             meu_ciclo = self.ciclo_atual 
         
         while True:
-            # 2. Verifica se foi pausado OU se outro loop tomou o lugar
             async with self:
                 if not self.monitorando or self.ciclo_atual != meu_ciclo:
                     break
@@ -264,7 +263,6 @@ class EchoState(rx.State):
             hora_atual = datetime.now().strftime("%H:%M:%S")
             
             for ativo in ativos_atuais:
-                # 3. USANDO ASYNC_PING PARA NÃO TRAVAR O SISTEMA
                 resultado = await icmplib.async_ping(ativo.ip, count=1, timeout=2)
                 latencia_ms = resultado.avg_rtt
                 
@@ -272,10 +270,10 @@ class EchoState(rx.State):
                 nova_latencia = 0.0
                 
                 # Estados de latência
-                if not resultado.is_alive: # async_ping verifica se está vivo assim
+                if not resultado.is_alive:
                     novo_status = "Offline"
                     nova_latencia = 0.0
-                elif latencia_ms > LIMITE_LATENCIA_MS:
+                elif latencia_ms > EchoState.config_limite_latencia:
                     novo_status = "Lento"
                     nova_latencia = latencia_ms
                 else:
@@ -307,7 +305,7 @@ class EchoState(rx.State):
                     break
                 self.ativos = ativos_atualizados
             
-            await asyncio.sleep(INTERVALO_SEGUNDOS)
+            await asyncio.sleep(EchoState.config_intervalo)
     
     # Pausar monitoramento e reiniciar ativos para estado inicial   
     def parar_monitoramento(self):
@@ -328,14 +326,14 @@ class EchoState(rx.State):
         self.ativos = ativos_resetados
 
     @rx.event(background=True)
-    async def loop_relatorio_horario(self):
+    async def loop_relatorio(self):
         async with self:
             if getattr(self, "loop_relatorio_ativo", False):
                 return
             self.loop_relatorio_ativo = True
 
         while True:
-            await asyncio.sleep(FREQUENCIA_EMAILS)
+            await asyncio.sleep(EchoState.config_frequencia_emails)
             print("teste de loop de relatorio horario")
             
             async with self:
@@ -355,7 +353,7 @@ class EchoState(rx.State):
                     
                     # Criamos uma cópia do ativo com a média calculada para a função de e-mail
                     ativo_relatorio = ativo.model_copy()
-                    ativo_relatorio.latencia = media_da_hora # Usamos o campo latencia para a média no e-mail
+                    ativo_relatorio.latencia = media_da_hora
                     ativos_para_relatorio.append(ativo_relatorio)
 
                     # 3. ZERAMOS os acumuladores no estado oficial para a nova hora
@@ -368,8 +366,6 @@ class EchoState(rx.State):
                 self.ativos = ativos_zerados_para_proxima_hora
                 destinatarios = self.emails.copy()
 
-            # 4. Dispara o e-mail usando a sua função já existente
-            # Chamamos fora do 'async with self' para não travar a interface
             if destinatarios:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Enviando relatório horário automático...")
                 disparar_email_teste(ativos_para_relatorio, destinatarios)
@@ -390,7 +386,7 @@ def renderizar_card(ativo: AtivoRede):
             radius=[4, 4, 0, 0]
         ),
         rx.recharts.x_axis(data_key="hora", hide=False),
-        rx.recharts.y_axis(hide=False, width=40, domain=[0, LIMITE_LATENCIA_MS]),
+        rx.recharts.y_axis(hide=False, width=40, domain=[0, EchoState.config_limite_latencia]),
         rx.recharts.graphing_tooltip(),
         data=ativo.historico,
         height=160,
@@ -473,8 +469,6 @@ def index() -> rx.Component:
 
                                 rx.divider(margin_y="1em"),
 
-                                rx.text("Em andamento..."),
-
                                 value="config"
                             ),
 
@@ -555,9 +549,12 @@ def index() -> rx.Component:
                                     rx.card(
                                         rx.text("Adicionar Novo Ativo:", size="3", font_weight="bold", padding_bottom="0.5em"),
                                         rx.hstack(
-                                            rx.input(placeholder="Nome", on_change=EchoState.set_novo_ativo_nome,value=EchoState.   novo_ativo_nome),
-                                            rx.input(placeholder="IP", on_change=EchoState.set_novo_ativo_ip,value=EchoState.novo_ativo_ip),
-                                            rx.input(placeholder="Local", on_change=EchoState.set_novo_ativo_local,value=EchoState. novo_ativo_local),
+                                            rx.input(placeholder="Nome", on_change=lambda v: EchoState.set_novo_attr("novo_ativo_nome", v), value=EchoState.novo_ativo_nome),
+
+                                            rx.input(placeholder="IP", on_change=lambda v: EchoState.set_novo_attr("novo_ativo_ip", v), value=EchoState.novo_ativo_ip),
+
+                                            rx.input(placeholder="Local", on_change=lambda v: EchoState.set_novo_attr("novo_ativo_local", v), value=EchoState.novo_ativo_local),
+                                            
                                             rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
 
                                             width="100%"
@@ -598,4 +595,4 @@ def index() -> rx.Component:
 
 # --- CONFIGURAÇÃO DO APP ---
 app = rx.App()
-app.add_page(index, title="Painel Echo", on_load=EchoState.loop_relatorio_horario)
+app.add_page(index, title="Painel Echo", on_load=EchoState.loop_relatorio)
