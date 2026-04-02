@@ -1,374 +1,5 @@
-from datetime import datetime
-from dotenv import load_dotenv
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 import reflex as rx
-import icmplib
-import asyncio
-import json
-import os
-import pydantic
-import smtplib
-
-# Criação do arquivo config.env se não existir
-if not os.path.exists("Echo/config.env"):
-    print("Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
-    with open("Echo/config.env", "w", encoding="utf-8") as f:
-        f.write("# Configurações de email\nSMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=suasenha\n# Configurações de monitoramento\nINTERVALO_SEGUNDOS=10\nLIMITE_LATENCIA_MS=100\nPINGS_MAXIMOS=12\nFREQUENCIA_EMAILS=60")
-
-# Carregando arquivo de acesso do email
-load_dotenv("Echo/config.env")
-
-# Estrutura do ativo de rede
-class AtivoRede(pydantic.BaseModel):
-    nome: str
-    ip: str
-    local: str
-    latencia: float = 0.0
-    latencia_total: float = 0.0
-    qnt_pings: int = 0
-    status: str = "Aguardando..."
-    historico: list[dict[str, str | float]] = []
-
-# Disparo de relatórios por email
-def disparar_email_teste(ativos, destinatarios):
-    # Travas de segurança: não tenta enviar se faltar dados
-    if not destinatarios:
-        print("Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
-        return
-    if not ativos:
-        print("Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
-        return
-
-    # Puxa as configurações do .env (já carregadas no topo do seu código)
-    servidor = os.environ.get("SMTP_SERVER")
-    porta = int(os.environ.get("SMTP_PORT", 465))
-    login = os.environ.get("SMTP_LOGIN")
-    senha = os.environ.get("SMTP_PASSWORD")
-
-    print("Montando relatório de ativos em HTML...")
-    
-    # 1. Constrói as linhas da tabela dinamicamente com base nos ativos
-    linhas_tabela = ""
-    for ativo in ativos:
-        # Define a cor do texto dependendo do status atual
-        cor_status = "green" if ativo.status == "Online" else "orange" if ativo.status == "Lento" else "red"
-        
-        linhas_tabela += f"""
-        <tr>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;"><b>{ativo.nome}</b></td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.ip}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.local}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee; color: {cor_status}; font-weight: bold;">{ativo.status}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.latencia_total/ativo.qnt_pings if ativo.qnt_pings > 0 else 0:.0f} ms</td>
-        </tr>
-        """
-
-    # 2. Constrói a casca do e-mail com a tabela dentro
-    corpo_html = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
-            <h2 style="color: #0056b3;">Echo - Relatório de Latencia</h2>
-            <p>Segue teste de latencia média de ativos:</p>
-            
-            <table style="border-collapse: collapse; width: 100%; max-width: 800px; text-align: left; margin-top: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                <tr style="background-color: #f4f6f8;">
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Nome do Equipamento</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Endereço IP</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Localização</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Status Atual</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Latência (Média)</th>
-                </tr>
-                {linhas_tabela}
-            </table>
-            
-            <p style="margin-top: 30px; font-size: 12px; color: #777;">
-                Mensagem gerada automaticamente pelo painel de monitoramento Echo.
-            </p>
-        </body>
-    </html>
-    """
-
-    # 3. Configura os cabeçalhos do e-mail
-    msg = MIMEMultipart()
-    msg['Subject'] = "Echo: Status Atual da Rede (Teste de Latência)"
-    msg['From'] = login
-    msg['To'] = ", ".join(destinatarios)
-    msg.attach(MIMEText(corpo_html, 'html'))
-
-    # 4. Conecta no servidor e faz o disparo
-    try:
-        print(f"Conectando ao servidor SMTP {servidor} via SSL...")
-        server = smtplib.SMTP_SSL(servidor, porta)
-        server.login(login, senha)
-        server.sendmail(login, destinatarios, msg.as_string())
-        server.quit()
-        
-        print("E-mail de teste enviado e entregue com sucesso!")
-    except Exception as e:
-        print(f"Falha crítica ao enviar o e-mail: {e}")
-
-# Processamento de ativos a partir do arquivo ips.json
-def carregar_ativos():
-    if os.path.exists('Echo/ips.json'):
-        print("Carregando ativos de ips.json...")
-
-        with open('Echo/ips.json', 'r', encoding='utf-8') as f:
-            dados = json.load(f)
-            return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in dados]
-    else:
-        print("Arquivo ips.json não encontrado. Criando arquivo de exemplo...")
-
-        os.makedirs('Echo', exist_ok=True)
-
-        with open('Echo/ips.json', 'w', encoding='utf-8') as f:
-            exemplo = [{"nome": "Google", "ip": "8.8.8.8", "local": "N/A"},{"nome": "Cloudflare", "ip": "1.1.1.1", "local": "N/A"}]
-            json.dump(exemplo, f)
-
-        return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in exemplo]
-
-# Processamento de emails a partir do arquivo emails.json
-def carregar_emails():
-    if os.path.exists('Echo/emails.json'):
-        print("Carregando emails de emails.json...")
-        with open('Echo/emails.json', 'r', encoding='utf-8') as f:
-            return json.load(f) 
-    else:
-        print("Arquivo emails.json não encontrado. Criando arquivo de exemplo...")
-        os.makedirs('Echo', exist_ok=True)
-        exemplo = ["exemplo@dominio.com"]
-        with open('Echo/emails.json', 'w', encoding='utf-8') as f:
-            json.dump(exemplo, f)
-        return exemplo
-
-# --- ESTADO DE MONITORAMENTO ---
-class EchoState(rx.State):
-    # Configurações de Dominio
-    config_smtp_server = os.environ.get("SMTP_SERVER")
-    config_smtp_port = int(os.environ.get("SMTP_PORT"))
-    config_smtp_login = os.environ.get("SMTP_LOGIN")
-    config_smtp_password = os.environ.get("SMTP_PASSWORD")
-
-    # Configurações
-    config_intervalo = int(os.environ.get("INTERVALO_SEGUNDOS", 10))
-    config_limite_latencia = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
-    config_pings_maximos = int(os.environ.get("PINGS_MAXIMOS", 12))
-    config_frequencia_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
-
-    # Configurações iniciais
-    ativos: list[AtivoRede] = carregar_ativos()
-    ativos_buffer: list[dict[str, str]] = []
-    monitorando: bool = False
-    loop_relatorio_ativo: bool = False
-    ciclo_atual: int = 0
-    
-    emails: list[str] = carregar_emails()
-
-    # Inputs temporários do modal
-    novo_email_input: str = ""
-    novo_ativo_nome: str = ""
-    novo_ativo_ip: str = ""
-    novo_ativo_local: str = ""
-
-    # Inputs temporários de configurações de dominio
-    novo_smtp_server: str = ""
-    novo_smtp_port: str = ""
-    novo_smtp_login: str = ""
-    novo_smtp_password: str = ""
-
-    # Inputs temporários de configurações de monitoramento
-    nova_limite_latencia: str = ""
-    nova_frequencia_emails: str = ""
-    novo_intervalo: str = ""
-    novo_pings_maximos: str = ""
-
-    ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in ativos]
-
-    def set_novo_email(self, valor: str):
-        self.novo_email_input = valor.strip()
-
-    def adicionar_email(self):
-        if self.novo_email_input and self.novo_email_input not in self.emails:
-            self.emails.append(self.novo_email_input)
-            self.novo_email_input = ""
-            self.salvar_emails()
-
-    def remover_email(self, email_alvo: str):
-        if email_alvo in self.emails:
-            self.emails.remove(email_alvo)
-            self.salvar_emails()
-
-    def salvar_emails(self):
-        with open('Echo/emails.json', 'w', encoding='utf-8') as f:
-            json.dump(self.emails, f)
-
-    def set_novo_attr(self, atributo: str, valor: str):
-        setattr(self, atributo, valor)
-        
-    def adicionar_ativo_buffer(self):
-        if self.novo_ativo_nome and self.novo_ativo_ip and self.novo_ativo_local:
-            self.ativos_buffer.append({
-                "nome": self.novo_ativo_nome.strip(),
-                "ip": self.novo_ativo_ip.strip(),
-                "local": self.novo_ativo_local.strip()
-            })
-            
-            self.novo_ativo_nome = ""
-            self.novo_ativo_ip = ""
-            self.novo_ativo_local = ""
-            
-    def remover_ativo_buffer(self, ip_alvo: str):
-        """Remove da lista temporária com base no IP"""
-        self.ativos_buffer = [a for a in self.ativos_buffer if a["ip"] != ip_alvo]
-        
-    def salvar_ativos(self):
-        """Salva as modificações, reescreve o json e atualiza a interface"""
-        # 1. Salva no arquivo JSON
-        with open('Echo/ips.json', 'w', encoding='utf-8') as f:
-            json.dump(self.ativos_buffer, f)
-            
-        # 2. Recria a lista oficial de Ativos da interface (limpando o histórico)
-        novos_ativos = []
-        for item in self.ativos_buffer:
-            novos_ativos.append(AtivoRede(
-                nome=item['nome'], 
-                ip=item['ip'], 
-                local=item['local'],
-                status="Aguardando...",
-                latencia=0.0,
-                latencia_total=0.0,
-                qnt_pings=0,
-                historico=[]
-            ))
-        
-        # 3. Atualiza os cards da interface
-        self.ativos = novos_ativos
-
-    @rx.event(background=True)
-    async def loop_monitoramento(self):
-        async with self:
-            if self.monitorando:
-                return
-            self.monitorando = True
-            self.ciclo_atual += 1
-            meu_ciclo = self.ciclo_atual 
-        
-        while True:
-            async with self:
-                if not self.monitorando or self.ciclo_atual != meu_ciclo:
-                    break
-                ativos_atuais = self.ativos.copy()
-            
-            ativos_atualizados = []
-            hora_atual = datetime.now().strftime("%H:%M:%S")
-            
-            for ativo in ativos_atuais:
-                resultado = await icmplib.async_ping(ativo.ip, count=1, timeout=2)
-                latencia_ms = resultado.avg_rtt
-                
-                novo_status = "Aguardando..."
-                nova_latencia = 0.0
-                
-                # Estados de latência
-                if not resultado.is_alive:
-                    novo_status = "Offline"
-                    nova_latencia = 0.0
-                elif latencia_ms > EchoState.config_limite_latencia:
-                    novo_status = "Lento"
-                    nova_latencia = latencia_ms
-                else:
-                    novo_status = "Online"
-                    nova_latencia = latencia_ms
-                
-                novo_historico = ativo.historico.copy()
-                novo_historico.append({"hora": hora_atual, "latencia": nova_latencia})
-                
-                if len(novo_historico) > 15:
-                    novo_historico.pop(0)
-                
-                novo_ativo = AtivoRede(
-                    nome=ativo.nome,
-                    ip=ativo.ip,
-                    local=ativo.local,
-                    status=novo_status,
-                    latencia=nova_latencia,
-                    latencia_total=ativo.latencia_total + nova_latencia,
-                    qnt_pings=ativo.qnt_pings + 1,
-                    historico=novo_historico
-                )
-                
-                ativos_atualizados.append(novo_ativo)
-            
-            # 4. Segunda verificação de segurança antes de atualizar a tela
-            async with self:
-                if not self.monitorando or self.ciclo_atual != meu_ciclo:
-                    break
-                self.ativos = ativos_atualizados
-            
-            await asyncio.sleep(EchoState.config_intervalo)
-    
-    # Pausar monitoramento e reiniciar ativos para estado inicial   
-    def parar_monitoramento(self):
-        self.monitorando = False
-        self.ciclo_atual += 1
-
-        ativos_resetados = []
-        for ativo in self.ativos:
-            ativo_limpo = AtivoRede(
-                nome=ativo.nome,
-                ip=ativo.ip,
-                local=ativo.local,
-                status="Aguardando...",
-                latencia=0.0,
-                historico=[]
-            )
-            ativos_resetados.append(ativo_limpo)
-        self.ativos = ativos_resetados
-
-    @rx.event(background=True)
-    async def loop_relatorio(self):
-        async with self:
-            if getattr(self, "loop_relatorio_ativo", False):
-                return
-            self.loop_relatorio_ativo = True
-
-        while True:
-            await asyncio.sleep(EchoState.config_frequencia_emails)
-            print("teste de loop de relatorio horario")
-            
-            async with self:
-                # Só envia se o monitoramento estiver ligado e houver ativos
-                if not self.monitorando or not self.ativos:
-                    continue
-
-                # 2. Prepara os dados para o e-mail e reseta os contadores
-                ativos_para_relatorio = []
-                ativos_zerados_para_proxima_hora = []
-
-                for ativo in self.ativos:
-                    # Calculamos a média da hora atual antes de zerar
-                    media_da_hora = 0.0
-                    if ativo.qnt_pings > 0:
-                        media_da_hora = ativo.latencia_total / ativo.qnt_pings
-                    
-                    # Criamos uma cópia do ativo com a média calculada para a função de e-mail
-                    ativo_relatorio = ativo.model_copy()
-                    ativo_relatorio.latencia = media_da_hora
-                    ativos_para_relatorio.append(ativo_relatorio)
-
-                    # 3. ZERAMOS os acumuladores no estado oficial para a nova hora
-                    ativo_limpo = ativo.model_copy()
-                    ativo_limpo.latencia_total = 0.0
-                    ativo_limpo.qnt_pings = 0
-                    ativos_zerados_para_proxima_hora.append(ativo_limpo)
-
-                # Atualiza a lista oficial com contadores zerados
-                self.ativos = ativos_zerados_para_proxima_hora
-                destinatarios = self.emails.copy()
-
-            if destinatarios:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Enviando relatório horário automático...")
-                disparar_email_teste(ativos_para_relatorio, destinatarios)
+from .states import AppState, ConfigState, MonitoramentoState, AtivoRede
 
 # --- CARD ---
 def renderizar_card(ativo: AtivoRede):
@@ -386,7 +17,8 @@ def renderizar_card(ativo: AtivoRede):
             radius=[4, 4, 0, 0]
         ),
         rx.recharts.x_axis(data_key="hora", hide=False),
-        rx.recharts.y_axis(hide=False, width=40, domain=[0, EchoState.config_limite_latencia]),
+        # Lê o limite dinamicamente do ConfigState
+        rx.recharts.y_axis(hide=False, width=40, domain=[0, ConfigState.config["limite_latencia_ms"]]),
         rx.recharts.graphing_tooltip(),
         data=ativo.historico,
         height=160,
@@ -437,27 +69,27 @@ def index() -> rx.Component:
             rx.hstack(
                 rx.button(
                     rx.icon("play"), 
-                    on_click=EchoState.loop_monitoramento, 
+                    on_click=MonitoramentoState.loop_monitoramento, 
                     color_scheme="green",
-                    disabled=EchoState.monitorando,
+                    disabled=MonitoramentoState.monitorando,
                     variant="soft"
                 ),
                 rx.button(
                     rx.icon("pause"), 
-                    on_click=EchoState.parar_monitoramento, 
+                    on_click=MonitoramentoState.parar_monitoramento, 
                     color_scheme="red",
-                    disabled=~EchoState.monitorando,
+                    disabled=~MonitoramentoState.monitorando,
                     variant="soft"
                 ),
                 
                 # Configurações gerais
                 rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("settings"), color_scheme="blue", variant="soft"), disabled=EchoState.monitorando),
+                    rx.dialog.trigger(rx.button(rx.icon("settings"), color_scheme="blue", variant="soft"), disabled=MonitoramentoState.monitorando),
 
                     rx.dialog.content(
                         rx.tabs.root(
                             rx.tabs.list(
-                                rx.tabs.trigger("Configurações", value="config", color_scheme="purple"),
+                                rx.tabs.trigger("Configurações", value="config", color_scheme="purple", disabled=MonitoramentoState.monitorando),
                                 rx.tabs.trigger("Gerenciar Emails", value="emails", color_scheme="orange"),
                                 rx.tabs.trigger("Gerenciar Ativos", value="ativos", color_scheme="blue"),
                             ),
@@ -465,9 +97,112 @@ def index() -> rx.Component:
                             # --- Configurações Gerais ---
                             rx.tabs.content(
                                 rx.dialog.title("Configurações Gerais", padding_top="1em"),
-                                rx.dialog.description("Configurações gerais do painel como login de email e frequência de envio de relatórios."),
+                                rx.dialog.description("Ajuste os parâmetros do servidor e do monitoramento de rede."),
+                                rx.divider(margin_y="1em"),
+
+                                # Scroll area previne que o modal fique gigante na tela
+                                rx.scroll_area(
+                                    rx.callout("O sistema reiniciará ao salvar alterações", icon="info", color_scheme="blue", variant="surface"),
+                                    rx.vstack(
+                                        # SEÇÃO 1: SERVIDOR DE E-MAIL
+                                        rx.text("Servidor de E-mail (SMTP)", weight="bold", padding_top="0.5em"),
+                                        rx.grid(
+                                            rx.vstack(
+                                                rx.text("Servidor SMTP:", size="2"),
+                                                rx.input(
+                                                    value=AppState.config_buffer["smtp_server"],
+                                                    on_change=lambda v: ConfigState.atualizar_buffer("smtp_server", v),
+                                                    placeholder="mail.dominio.com.br"
+                                                ),
+                                            ),
+                                            rx.vstack(
+                                                rx.text("Porta SMTP:", size="2"),
+                                                rx.input(
+                                                    value=AppState.config_buffer["smtp_port"],
+                                                    on_change=lambda v: ConfigState.atualizar_buffer("smtp_port", v),
+                                                    placeholder="465"
+                                                ),
+                                            ),
+                                            rx.vstack(
+                                                rx.text("Login:", size="2"),
+                                                rx.input(
+                                                    value=AppState.config_buffer["smtp_login"],
+                                                    on_change=lambda v: ConfigState.atualizar_buffer("smtp_login", v),
+                                                    placeholder="alertas@dominio.com.br"
+                                                ),
+                                            ),
+                                            rx.vstack(
+                                                rx.text("Senha:", size="2"),
+                                                rx.input(
+                                                    value=AppState.config_buffer["smtp_password"],
+                                                    on_change=lambda v: ConfigState.atualizar_buffer("smtp_password", v),
+                                                    type="password", # Oculta os caracteres digitados
+                                                    placeholder="********"
+                                                ),
+                                            ),
+                                            columns="2",
+                                            spacing="2",
+                                            width="100%",
+                                        ),
+
+                                        rx.divider(margin_y="1em"),
+
+                                        # SEÇÃO 2: REGRAS DE MONITORAMENTO
+                                        rx.text("Regras de Monitoramento", weight="bold"),
+                                        rx.grid(
+                                            rx.vstack(
+                                                rx.text("Intervalo de Ping (segundos):", size="2"),
+                                                rx.input(
+                                                    value=AppState.config_buffer["intervalo_segundos"],
+                                                    on_change=lambda v: ConfigState.atualizar_buffer("intervalo_segundos", v),
+                                                    placeholder="10"
+                                                ),
+                                            ),
+                                            rx.vstack(
+                                                rx.text("Latência Crítica (ms):", size="2"),
+                                                rx.input(
+                                                    value=AppState.config_buffer["limite_latencia_ms"],
+                                                    on_change=lambda v: ConfigState.atualizar_buffer("limite_latencia_ms", v),
+                                                    placeholder="100"
+                                                ),
+                                            ),
+                                            rx.vstack(
+                                                rx.text("Máximo Pings no Gráfico:", size="2"),
+                                                rx.input(
+                                                    value=AppState.config_buffer["pings_maximos"],
+                                                    on_change=lambda v: ConfigState.atualizar_buffer("pings_maximos", v),
+                                                    placeholder="12"
+                                                ),
+                                            ),
+                                            rx.vstack(
+                                                rx.text("Frequência de E-mail (minutos):", size="2"),
+                                                rx.input(
+                                                    value=AppState.config_buffer["frequencia_emails"],
+                                                    on_change=lambda v: ConfigState.atualizar_buffer("frequencia_emails", v),
+                                                    placeholder="60"
+                                                ),
+                                            ),
+                                            columns="2",
+                                            spacing="2",
+                                            width="100%",
+                                            justify="between",
+                                        ),
+                                        width="100%",
+                                        align_items="stretch",
+                                    ),
+                                    type="scroll",
+                                    style={"max_height": "50vh"}, # Limita a altura para caber em telas menores
+                                    padding_right="1em"
+                                ),
 
                                 rx.divider(margin_y="1em"),
+
+                                rx.button(
+                                    "Salvar Alterações", 
+                                    on_click=ConfigState.salvar_configuracoes, 
+                                    color_scheme="purple", 
+                                    width="100%"
+                                ),
 
                                 value="config"
                             ),
@@ -482,11 +217,11 @@ def index() -> rx.Component:
                                 rx.vstack(
                                     # Lista de emails atuais
                                     rx.foreach(
-                                        EchoState.emails, 
+                                        ConfigState.emails, 
                                         lambda email: rx.card(
                                             rx.hstack(
                                                 rx.text(email, width="100%"),
-                                                rx.button(rx.icon("trash"), on_click=EchoState.remover_email(email), color_scheme="red", variant="ghost"),
+                                                rx.button(rx.icon("trash"), on_click=ConfigState.remover_email(email), color_scheme="red", variant="ghost"),
                                                 width="100%",
                                                 align_items="center",
                                             ),
@@ -499,11 +234,11 @@ def index() -> rx.Component:
                                         rx.hstack(
                                             rx.input(
                                                 placeholder="novo@dominio.com", 
-                                                on_change=EchoState.set_novo_email, 
-                                                value=EchoState.novo_email_input,
+                                                on_change=lambda v: ConfigState.set_novo_attr("novo_email_input", v), 
+                                                value=ConfigState.novo_email_input,
                                                 width="100%"
                                             ),
-                                            rx.button(rx.icon("plus"), on_click=EchoState.adicionar_email, color_scheme="green"),
+                                            rx.button(rx.icon("plus"), on_click=ConfigState.adicionar_email, color_scheme="green"),
                                             width="100%"
                                         ),
                                     ),
@@ -524,7 +259,7 @@ def index() -> rx.Component:
                                 rx.vstack(
                                     # Lista de ativos no buffer
                                     rx.foreach(
-                                        EchoState.ativos_buffer, 
+                                        MonitoramentoState.ativos_buffer, 
                                         lambda ativo: rx.card(
                                             rx.hstack(
                                                 rx.vstack(
@@ -535,7 +270,7 @@ def index() -> rx.Component:
                                                     width="100%"
                                                 ),
 
-                                                rx.button(rx.icon("trash"), on_click=EchoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="ghost"),
+                                                rx.button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="ghost"),
 
                                                 width="100%",
                                                 align_items="center",
@@ -549,13 +284,13 @@ def index() -> rx.Component:
                                     rx.card(
                                         rx.text("Adicionar Novo Ativo:", size="3", font_weight="bold", padding_bottom="0.5em"),
                                         rx.hstack(
-                                            rx.input(placeholder="Nome", on_change=lambda v: EchoState.set_novo_attr("novo_ativo_nome", v), value=EchoState.novo_ativo_nome),
+                                            rx.input(placeholder="Nome", on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_nome", v), value=MonitoramentoState.novo_ativo_nome),
 
-                                            rx.input(placeholder="IP", on_change=lambda v: EchoState.set_novo_attr("novo_ativo_ip", v), value=EchoState.novo_ativo_ip),
+                                            rx.input(placeholder="IP", on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_ip", v), value=MonitoramentoState.novo_ativo_ip),
 
-                                            rx.input(placeholder="Local", on_change=lambda v: EchoState.set_novo_attr("novo_ativo_local", v), value=EchoState.novo_ativo_local),
+                                            rx.input(placeholder="Local", on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_local", v), value=MonitoramentoState.novo_ativo_local),
                                             
-                                            rx.button(rx.icon("plus"), on_click=EchoState.adicionar_ativo_buffer, color_scheme="green"),
+                                            rx.button(rx.icon("plus"), on_click=MonitoramentoState.adicionar_ativo_buffer, color_scheme="green"),
 
                                             width="100%"
                                         ),
@@ -565,13 +300,14 @@ def index() -> rx.Component:
                                     padding_bottom="1em",
                                 ),
                                 # Botões de Ação do Modal
-                                rx.button("Salvar e Atualizar", on_click=EchoState.salvar_ativos, color_scheme="blue",justify_self="end", width="100%"),
+                                rx.button("Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos, color_scheme="blue",justify_self="end", width="100%"),
 
                                 value="ativos"
                             ),
+                            default_value="emails"
                         ),
 
-                        width="30%",
+                        width="35%",
                     ),
                 ),
             ),
@@ -580,7 +316,7 @@ def index() -> rx.Component:
             
             # Cards de ativos
             rx.grid(
-                rx.foreach(EchoState.ativos, renderizar_card),
+                rx.foreach(MonitoramentoState.ativos, renderizar_card),
                 columns="4",
                 spacing="4",
                 width="100%"
@@ -591,8 +327,9 @@ def index() -> rx.Component:
 
         width="100%",
         height="100%",
-    ),
+    )
 
 # --- CONFIGURAÇÃO DO APP ---
 app = rx.App()
-app.add_page(index, title="Painel Echo", on_load=EchoState.loop_relatorio)
+# Aciona o on_load e o loop de email no MonitoramentoState
+app.add_page(index, title="Painel Echo", on_load=[MonitoramentoState.on_load, MonitoramentoState.loop_relatorio])
