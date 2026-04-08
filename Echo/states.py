@@ -228,6 +228,27 @@ class MonitoramentoState(AppState):
         self.ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in self.ativos]
 
     @rx.event
+    def reiniciar_sistema_local(self):
+        """Reseta o monitoramento e o timer de e-mail sem recarregar a página"""
+        
+        # 1. Mata os loops atuais
+        self.monitorando = False
+        self.loop_relatorio_ativo = False
+        self.ciclo_atual += 1 # Isso faz os 'while' pararem no próximo check
+        
+        # 3. Limpa o visual dos ativos para o estado inicial
+        # Usamos uma compreensão de lista para resetar o status de todos
+        self.ativos = [
+            a.model_copy(update={
+                "status": "Aguardando...",
+                "latencia": 0.0,
+                "historico": []
+            }) for a in self.ativos
+        ]
+        
+        print("🔄 Estados reiniciados com sucesso!")
+
+    @rx.event
     def adicionar_ativo_buffer(self):
         if self.novo_ativo_nome and self.novo_ativo_ip and self.novo_ativo_local:
             self.ativos_buffer.append({
@@ -332,7 +353,7 @@ class MonitoramentoState(AppState):
                 estado_config = await self.get_state(ConfigState)
                 tempo_espera = estado_config.config["frequencia_emails"]
                 
-            await asyncio.sleep(tempo_espera)
+            await asyncio.sleep(tempo_espera*60)
             
             async with self:
                 if not self.monitorando or not self.ativos: continue

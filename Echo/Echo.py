@@ -84,12 +84,12 @@ def index() -> rx.Component:
                 
                 # Configurações gerais
                 rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("settings"), color_scheme="blue", variant="soft"), disabled=MonitoramentoState.monitorando),
+                    rx.dialog.trigger(rx.button(rx.icon("settings"), color_scheme="blue", variant="soft", disabled=MonitoramentoState.monitorando)),
 
                     rx.dialog.content(
                         rx.tabs.root(
                             rx.tabs.list(
-                                rx.tabs.trigger("Configurações", value="config", color_scheme="purple", disabled=MonitoramentoState.monitorando),
+                                rx.tabs.trigger("Configurações", value="config", color_scheme="purple"),
                                 rx.tabs.trigger("Gerenciar Emails", value="emails", color_scheme="orange"),
                                 rx.tabs.trigger("Gerenciar Ativos", value="ativos", color_scheme="blue"),
                             ),
@@ -145,7 +145,7 @@ def index() -> rx.Component:
                                             width="100%",
                                         ),
 
-                                        rx.divider(margin_y="1em"),
+                                        rx.divider(margin_y=".5em"),
 
                                         # SEÇÃO 2: REGRAS DE MONITORAMENTO
                                         rx.text("Regras de Monitoramento", weight="bold"),
