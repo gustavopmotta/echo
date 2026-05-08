@@ -1,5 +1,5 @@
 import reflex as rx
-from .states import AppState, ConfigState, MonitoramentoState, AtivoRede
+from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, User
 
 # --- CARD ---
 def renderizar_card(ativo: AtivoRede):
@@ -58,33 +58,133 @@ def renderizar_card(ativo: AtivoRede):
         width="100%",
     )
 
+# No Echo.py
+def tela_login():
+    return rx.center(
+        rx.card(
+            rx.vstack(
+                rx.heading("Bem-vindo ao Echo!", size="7"),
+                rx.text("Faça login com sua conta", size="3", text_align="center", color="gray", margin_bottom="1em"),
+
+                rx.vstack(
+                    rx.text("Email", size="3", weight="medium", width="100%", text_align="left"),
+                    rx.input(
+                        rx.input.slot(rx.icon("user")),
+                        placeholder="usuário@echo.com", 
+                        on_change=lambda v: AuthState.set_novo_attr("usuario_input", v),
+                        value=AuthState.usuario_input,
+                        width="100%",
+                        size="3"
+                    ),
+                    width="100%",
+                    justify="start",
+                    spacing="1"
+                ),
+
+                rx.vstack(
+                    rx.text("Senha", size="3", weight="medium", width="100%", text_align="left"),
+                    rx.input(
+                        rx.input.slot(rx.icon("lock")),
+                        type="password", 
+                        placeholder="**********",
+                        on_change=lambda v: AuthState.set_novo_attr("senha_input", v),
+                        value=AuthState.senha_input,
+                        width="100%",
+                        size="3"
+                    ),
+                    width="100%",
+                    justify="start",
+                    spacing="1"
+                ),
+                rx.button("Fazer Login", on_click=AuthState.tentar_login, width="100%", color_scheme="purple", size="3", weight="bold"),
+
+                align_items="center",
+                spacing="3",
+                width="100%"
+            ),
+            size="4",
+            width="100%",
+            max_width="24em",
+        ),
+        height="100vh"
+    )
+
+# --- TELA DE SETUP INICIAL ---
+def tela_setup_inicial():
+    return rx.center(
+        rx.card(
+            rx.vstack(
+                rx.heading("Bem-vindo ao Echo!", size="7"),
+                rx.text("Crie o usuário Administrador para inicializar o sistema.", size="1", text_align="center", color="gray", margin_bottom="1em"),
+                
+                rx.input(
+                    rx.input.slot(rx.icon("user_star")),
+                    placeholder="Nome do Administrador", 
+                    on_change=lambda v: AuthState.set_novo_attr("setup_username", v),
+                    value=AuthState.setup_username,
+                    width="100%"
+                ),
+                rx.input(
+                    rx.input.slot(rx.icon("lock")),
+                    type="password",
+                    placeholder="Senha",
+                    on_change=lambda v: AuthState.set_novo_attr("setup_password", v),
+                    value=AuthState.setup_password,
+                    width="100%"
+                ),
+                rx.input(
+                    rx.input.slot(rx.icon("lock")),
+                    type="password", 
+                    placeholder="Confirme a Senha",
+                    on_change=lambda v: AuthState.set_novo_attr("setup_confirmacao", v),
+                    value=AuthState.setup_confirmacao,
+                    width="100%"
+                ),
+                
+                rx.button("Criar Administrador", on_click=AuthState.registrar_primeiro_admin, width="100%", color_scheme="purple", size="3", weight="bold"),
+                
+                align_items="center",
+                spacing="4"
+            ),
+            size="4",
+            width="100%",
+            max_width="24em",
+        ),
+        height="100vh"
+    )
+
 # --- PÁGINA DO PAINEL ---
 def index() -> rx.Component:
     return rx.box(
+        rx.color_mode.button(position="top-right"),
+        
         rx.vstack(
             # Titulo do painel
             rx.heading("ECHO", size="9"),
             
             # Botões de controle
             rx.hstack(
-                rx.button(
-                    rx.icon("play"), 
-                    on_click=MonitoramentoState.loop_monitoramento, 
-                    color_scheme="green",
-                    disabled=MonitoramentoState.monitorando,
-                    variant="soft"
-                ),
-                rx.button(
-                    rx.icon("pause"), 
-                    on_click=MonitoramentoState.parar_monitoramento, 
-                    color_scheme="red",
-                    disabled=~MonitoramentoState.monitorando,
-                    variant="soft"
+                rx.cond(
+                    ~MonitoramentoState.monitorando,
+                    rx.button(
+                        rx.icon("play"),
+                        "Iniciar Monitoramento", 
+                        on_click=MonitoramentoState.loop_monitoramento, 
+                        color_scheme="green",
+                        variant="solid"
+                    ),
+                    rx.button(
+                        rx.icon("pause"),
+                        "Parar Monitoramento", 
+                        on_click=MonitoramentoState.parar_monitoramento, 
+                        color_scheme="red",
+                        variant="solid"
+                    ),
                 ),
                 
                 # Configurações gerais
                 rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("settings"), color_scheme="blue", variant="soft", disabled=MonitoramentoState.monitorando)),
+                    rx.dialog.trigger(rx.button(rx.icon("settings"), "Configurações", color_scheme="blue", variant="surface", disabled=MonitoramentoState.monitorando)),
 
                     rx.dialog.content(
                         rx.tabs.root(
@@ -221,7 +321,7 @@ def index() -> rx.Component:
                                         lambda email: rx.card(
                                             rx.hstack(
                                                 rx.text(email, width="100%"),
-                                                rx.button(rx.icon("trash"), on_click=ConfigState.remover_email(email), color_scheme="red", variant="ghost"),
+                                                rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_email(email), color_scheme="red", variant="ghost"),
                                                 width="100%",
                                                 align_items="center",
                                             ),
@@ -238,7 +338,7 @@ def index() -> rx.Component:
                                                 value=ConfigState.novo_email_input,
                                                 width="100%"
                                             ),
-                                            rx.button(rx.icon("plus"), on_click=ConfigState.adicionar_email, color_scheme="green"),
+                                            rx.icon_button(rx.icon("plus"), on_click=ConfigState.adicionar_email, color_scheme="green"),
                                             width="100%"
                                         ),
                                     ),
@@ -270,7 +370,7 @@ def index() -> rx.Component:
                                                     width="100%"
                                                 ),
 
-                                                rx.button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="ghost"),
+                                                rx.icon_button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="ghost"),
 
                                                 width="100%",
                                                 align_items="center",
@@ -290,7 +390,7 @@ def index() -> rx.Component:
 
                                             rx.input(placeholder="Local", on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_local", v), value=MonitoramentoState.novo_ativo_local),
                                             
-                                            rx.button(rx.icon("plus"), on_click=MonitoramentoState.adicionar_ativo_buffer, color_scheme="green"),
+                                            rx.icon_button(rx.icon("plus"), on_click=MonitoramentoState.adicionar_ativo_buffer, color_scheme="green"),
 
                                             width="100%"
                                         ),
@@ -304,12 +404,113 @@ def index() -> rx.Component:
 
                                 value="ativos"
                             ),
-                            default_value="emails"
+
+                            default_value="config"
                         ),
 
                         width="35%",
                     ),
                 ),
+
+                # Configurações de usuários
+                rx.dialog.root(
+                    rx.dialog.trigger(rx.button(rx.icon("users"), "Usuários", color_scheme="orange", variant="surface")),
+
+                    rx.dialog.content(
+                        rx.dialog.title("Gerenciar Usuários", padding_top="1em"),
+                        rx.dialog.description("Crie ou remova credenciais de acesso ao painel."),
+                        rx.divider(margin_y="1em"),
+                    
+                        # Lista de usuários existentes
+                        rx.scroll_area(
+                            rx.vstack(
+                                rx.foreach(
+                                    UserManagementState.lista_usuarios,
+                                    lambda u: rx.card(
+                                        rx.hstack(
+                                            rx.vstack(
+                                                rx.text(u["username"], font_weight="bold"),
+                                                rx.hstack(
+                                                    rx.badge(
+                                                        rx.icon(rx.cond(u["role"] == "admin", "crown", "database"), size=16, stroke_width=2),
+                                                        rx.cond(u["role"] == "admin", "Admin", "Operador"),
+                                                        color_scheme=rx.cond(u["role"] == "admin", "yellow", "blue"),
+                                                        radius="full",
+                                                    ),
+                                                    rx.cond(UserManagementState.usuario_logado == u["username"],
+                                                        rx.badge(rx.icon("user", size=16), "Usuário Atual", color_scheme="green", radius="full")
+                                                    ),
+                                                ),
+                                                spacing="1",
+                                                align_items="start"
+                                            ),
+                                            rx.spacer(),
+                                            rx.cond(
+                                                (UserManagementState.usuario_logado == u["username"]) | (UserManagementState.role_logado == "admin"),
+                                                rx.hstack(
+                                                    # Botão da chave abre o formulário
+                                                    rx.icon_button(rx.icon("key"), on_click=UserManagementState.iniciar_edicao_senha(u["username"]), color_scheme="blue", variant="outline"),
+                                                    rx.icon_button(rx.icon("trash"), on_click=UserManagementState.deletar_usuario(u["username"]), color_scheme="red", variant="outline"),
+                                                ),
+                                            ),
+                                            width="100%", align_items="center"
+                                        ),
+                                        width="100%"
+                                    )
+                                ),
+                                width="100%",
+                                padding_bottom="1em"
+                            ),
+                            type="scroll", style={"max_height": "30vh"}
+                        ),
+                    
+                        rx.divider(margin_y="1em"),
+                    
+                        # Formulário de Adição
+                        rx.card(
+                            rx.text("Criar Novo Usuário", font_weight="bold", margin_bottom="1em"),
+                            rx.vstack(
+                                rx.input(
+                                    rx.input.slot(rx.icon("mail")),
+                                    placeholder="Email", 
+                                    value=UserManagementState.form_username, 
+                                    on_change=lambda v: UserManagementState.set_novo_attr("form_username", v),
+                                    width="100%"
+                                ),
+                                rx.input(
+                                    rx.input.slot(rx.icon("lock")),
+                                    placeholder="Senha", 
+                                    type="password", 
+                                    value=UserManagementState.form_password, 
+                                    on_change=lambda v: UserManagementState.set_novo_attr("form_password", v),
+                                    width="100%"
+                                ),
+                                rx.cond(UserManagementState.role_logado == "admin",
+                                    rx.checkbox(
+                                        "Administrador", 
+                                        checked=UserManagementState.form_is_admin, 
+                                        on_change=lambda v: UserManagementState.set_novo_attr("form_is_admin", v)
+                                    ),
+                                ),
+                                rx.button(
+                                    rx.icon("user-plus"), 
+                                    "Adicionar Usuário", 
+                                    on_click=UserManagementState.adicionar_usuario, 
+                                    color_scheme="green", 
+                                    width="100%"
+                                ),
+
+                                align_items="start", width="100%", spacing="3"
+                            ),
+                            width="100%",
+                            variant="surface"
+                        ),
+                        width="30%",
+                    ),
+                ),
+            
+                # Logoff
+                rx.icon_button(rx.icon("door_open"), on_click=AuthState.fazer_logout, color_scheme="red", variant="surface"),
             ),
             
             rx.divider(margin_y="1em"),
@@ -332,4 +533,11 @@ def index() -> rx.Component:
 # --- CONFIGURAÇÃO DO APP ---
 app = rx.App()
 # Aciona o on_load e o loop de email no MonitoramentoState
-app.add_page(index, title="Painel Echo", on_load=[MonitoramentoState.on_load, MonitoramentoState.loop_relatorio])
+app.add_page(tela_setup_inicial, route="/setup", title="Configuração Inicial - Echo")
+app.add_page(tela_login, route="/login", title="Login - Echo")
+app.add_page(index, title="Painel - Echo", on_load=[
+    AuthState.verificar_acesso,
+    MonitoramentoState.on_load, 
+    MonitoramentoState.loop_relatorio,
+    UserManagementState.carregar_usuarios,
+])

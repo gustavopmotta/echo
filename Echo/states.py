@@ -2,6 +2,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from sqlmodel import Field
 import os
 import json
 import asyncio
@@ -9,6 +10,9 @@ import reflex as rx
 import icmplib
 import pydantic
 import smtplib
+import bcrypt
+import time
+import uuid
 
 # Criação do arquivo config.env se não existir
 if not os.path.exists("Echo/config.env"):
@@ -18,6 +22,12 @@ if not os.path.exists("Echo/config.env"):
 
 # Carregando arquivo de acesso do email
 load_dotenv("Echo/config.env")
+
+class User(rx.Model, table=True):
+    username: str = Field(index=True, unique=True)
+    password: str
+    role: str = "operador" # "admin" ou "operador"
+    session_token: str = ""
 
 class AtivoRede(pydantic.BaseModel):
     nome: str
@@ -152,6 +162,27 @@ class AppState(rx.State):
     novo_ativo_ip: str = ""
     novo_ativo_local: str = ""
 
+    usuario_logado: str = rx.LocalStorage("", name="echo_session_token")
+    role_logado: str = rx.LocalStorage("operador", name="echo_user_role")
+    token_logado: str = rx.LocalStorage("", name="echo_session_token")
+    usuario_input: str = ""
+    senha_input: str = ""
+
+    setup_username: str = "admin" # Sugestão padrão
+    setup_password: str = ""
+    setup_confirmacao: str = ""
+
+    lista_usuarios: list[dict[str, str | int]] = []
+    
+    # Variáveis do formulário
+    form_username: str = ""
+    form_password: str = ""
+    form_is_admin: bool = False
+
+    usuario_edicao: str = ""
+    nova_senha_input: str = ""
+    nova_senha_confirmacao: str = ""
+
     # --- Dicionários de Configuração ---
     config: dict[str, str | int]  = {
         "smtp_server": os.environ.get("SMTP_SERVER", ""), 
@@ -174,7 +205,132 @@ class AppState(rx.State):
         """Setter universal disponível para todas as classes filhas."""
         setattr(self, atributo, valor)
 
-# 2. ESTADO DE CONFIGURAÇÕES
+# 2. ESTADO DE AUTENTICAÇÃO
+class AuthState(AppState):
+    @rx.event
+    def tentar_login(self):
+        with rx.session() as session:
+            # Procura o utilizador na base de dados
+            user = session.exec(
+                User.select().where(User.username == self.usuario_input.lower().strip())
+            ).first()
+
+            if user:    
+                # Verifica a senha usando o Hash Bcrypt
+                password_bytes = self.senha_input.encode('utf-8')
+                hash_bytes = user.password.encode('utf-8')
+                novo_token = str(uuid.uuid4())
+
+                if bcrypt.checkpw(password_bytes, hash_bytes):
+                    novo_token = str(uuid.uuid4())
+                    
+                    # Atualiza o token no banco de dados (anulando logins antigos)
+                    user.session_token = novo_token
+                    session.add(user)
+                    session.commit()
+
+                    self.usuario_logado = user.username
+                    self.role_logado = user.role
+                    self.token_logado = novo_token # Manda para o navegador atual
+                    
+                    self.usuario_input = ""
+                    self.senha_input = ""
+
+                    yield rx.redirect("/")
+                    return
+
+            # Se falhar (utilizador não existe ou senha errada)
+            yield rx.toast.error("Usuário ou senha incorretos.", position="top-right")
+            self.senha_input = ""
+
+    @rx.event
+    def fazer_logout(self):
+        with rx.session() as db_session:
+            user = db_session.exec(User.select().where(User.username == self.usuario_logado)).first()
+            if user:
+                user.session_token = ""
+                db_session.add(user)
+                db_session.commit()
+
+        # Limpa o navegador
+        self.usuario_logado = ""
+        self.token_logado = ""
+        return rx.redirect("/login")
+
+    @rx.event
+    def verificar_acesso(self):
+        """O Novo Guarda-Costas: Verifica banco vazio -> Login -> Painel"""
+        with rx.session() as session:
+            # Se não existe NENHUM usuário no banco, força a ir para a tela de Setup
+            if not session.exec(User.select()).first():
+                self.usuario_logado, self.token_logado = "", ""
+                return rx.redirect("/setup")
+                
+        # Se existem usuários, mas o navegador não tem sessão, vai pro Login
+        if not self.usuario_logado or not self.token_logado:
+            return rx.redirect("/login")
+        
+        user = session.exec(User.select().where(User.username == self.usuario_logado)).first()
+            
+        if user:
+            # O PULO DO GATO: Se o token do navegador for diferente do banco, 
+            # significa que outro PC fez login com essa conta depois de nós!
+            if user.session_token != self.token_logado:
+                self.usuario_logado, self.token_logado = "", ""
+                print("Acesso negado: Token de sessão inválido. Outro login detectado para este usuário.")
+                return rx.redirect("/login")
+            
+            self.role_logado = user.role
+        else:
+            self.usuario_logado, self.token_logado = "", ""
+            return rx.redirect("/login")
+
+    @rx.event
+    def checar_acesso_login(self):
+        """Protege a própria tela de login. Se o banco estiver vazio, expulsa pro Setup."""
+        with rx.session() as session:
+            if not session.exec(User.select()).first():
+                return rx.redirect("/setup")
+                
+        # Se já estiver logado e tentar abrir o /login, manda pro Painel
+        if self.usuario_logado:
+            return rx.redirect("/")
+
+    @rx.event
+    def registrar_primeiro_admin(self):
+        """Cria o usuário Master e destranca o sistema."""
+        if not self.setup_username or not self.setup_password or not self.setup_confirmacao:
+            yield rx.toast.error("Todos os campos são obrigatórios para criar o administrador.", position="top-right")
+            return
+        
+        if self.setup_password != self.setup_confirmacao:
+            yield rx.toast.warning("As senhas não coincidem.", position="top-right")
+            return
+
+        with rx.session() as session:
+            # Proteção: Se alguém já criou, bloqueia a operação
+            if session.exec(User.select()).first():
+                yield rx.toast.error("O sistema já possui um administrador.", position="top-right")
+                return
+            
+            salt = bcrypt.gensalt()
+            hashed = bcrypt.hashpw(self.setup_password.encode('utf-8'), salt)
+            
+            novo_admin = User(
+                username=self.setup_username.lower().strip(),
+                password=hashed.decode('utf-8'),
+                role="admin"
+            )
+            session.add(novo_admin)
+            session.commit()
+        
+        # Loga automaticamente o criador e joga para o painel principal!
+        self.setup_username = ""
+        self.setup_password = ""
+        self.setup_confirmacao = ""
+        return rx.redirect("/login")
+
+# 3. ESTADO DE CONFIGURAÇÕES
 class ConfigState(AppState):
     """Gerencia exclusivamente as variáveis de ambiente e e-mails."""
 
@@ -218,8 +374,7 @@ class ConfigState(AppState):
         with open('Echo/emails.json', 'w', encoding='utf-8') as f:
             json.dump(self.emails, f)
 
-
-# 3. ESTADO DE MONITORAMENTO
+# 4. ESTADO DE MONITORAMENTO
 class MonitoramentoState(AppState):
     """Gerencia exclusivamente os pings, ativos e relatórios."""
 
@@ -246,7 +401,7 @@ class MonitoramentoState(AppState):
             }) for a in self.ativos
         ]
         
-        print("🔄 Estados reiniciados com sucesso!")
+        print("Estados reiniciados com sucesso!")
 
     @rx.event
     def adicionar_ativo_buffer(self):
@@ -378,3 +533,106 @@ class MonitoramentoState(AppState):
             if destinatarios:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Enviando relatório horário automático...")
                 disparar_email(ativos_para_relatorio, destinatarios) # Função externa
+
+# 5. ESTADO DE GERENCIAMENTO DE USUÁRIOS
+class UserManagementState(AppState):
+    """Gerencia a criação e exclusão de usuários do banco de dados."""
+
+    @rx.event
+    def carregar_usuarios(self):
+        """Lê todos os usuários do banco para exibir na tela."""
+        with rx.session() as session:
+            users = session.exec(User.select()).all()
+            self.lista_usuarios = [{"username": u.username, "role": u.role} for u in users]
+
+    @rx.event
+    def adicionar_usuario(self):       
+        if not self.form_username or not self.form_password:
+            yield rx.toast.error("Usuário e senha são obrigatórios.", position="top-right")
+            return
+
+        with rx.session() as session:
+            # Verifica se já existe
+            existente = session.exec(User.select().where(User.username == self.form_username.lower().strip())).first()
+            if existente:
+                yield rx.toast.error("Esse nome de usuário já existe.", position="top-right")
+                return
+
+            # Cria o hash e insere
+            salt = bcrypt.gensalt()
+            hashed = bcrypt.hashpw(self.form_password.encode('utf-8'), salt)
+            
+            novo_usuario = User(
+                username=self.form_username.lower().strip(),
+                password=hashed.decode('utf-8'),
+                role="admin" if self.form_is_admin else "operador"
+            )
+            session.add(novo_usuario)
+            session.commit()
+
+        # Limpa o formulário e atualiza a lista
+        self.form_username = ""
+        self.form_password = ""
+        self.form_is_admin = False
+        yield rx.toast.success("Usuário criado com sucesso!", position="top-right")
+        self.carregar_usuarios()
+
+    @rx.event
+    def deletar_usuario(self, username: str):
+        if username == "admin":
+            yield rx.toast.error("Proteção de sistema: Não é possível deletar o usuário admin principal.", position="top-right")
+            return
+
+        with rx.session() as session:
+            user = session.exec(User.select().where(User.username == username)).first()
+            if user:
+                session.delete(user)
+                session.commit()
+        
+        yield rx.toast.success(f"Usuário '{username}' deletado.", position="top-right")
+        self.carregar_usuarios()
+    
+    @rx.event
+    def iniciar_edicao_senha(self, username: str):
+        """Abre o formulário de senha no cartão do usuário específico."""
+        self.usuario_edicao = username
+        self.nova_senha_input = ""
+        self.nova_senha_confirmacao = ""
+
+    @rx.event
+    def cancelar_edicao(self):
+        """Fecha o formulário sem salvar."""
+        self.usuario_edicao = ""
+        self.nova_senha_input = ""
+        self.nova_senha_confirmacao = ""
+
+    @rx.event
+    def salvar_nova_senha(self):
+        """Valida as senhas, gera o novo Hash e salva no banco de dados."""
+        if not self.nova_senha_input or not self.nova_senha_confirmacao:
+            return rx.toast("Preencha ambos os campos de senha.", color_scheme="red", position="top-right")
+
+        # VALIDAÇÃO DE CONFIRMAÇÃO
+        if self.nova_senha_input != self.nova_senha_confirmacao:
+            return rx.toast("As senhas não coincidem. Tente novamente.", color_scheme="red", position="top-right")
+
+        with rx.session() as session:
+            user = session.exec(User.select().where(User.username == self.usuario_edicao)).first()
+            
+            if user:
+                salt = bcrypt.gensalt()
+                hashed = bcrypt.hashpw(self.nova_senha_input.encode('utf-8'), salt)
+                
+                user.password = hashed.decode('utf-8')
+                session.add(user)
+                session.commit()
+                
+                self.usuario_edicao = ""
+                self.nova_senha_input = ""
+                self.nova_senha_confirmacao = ""
+                return rx.toast(f"Senha de '{self.usuario_edicao}' alterada!", color_scheme="green", position="top-right")
+            else:
+                self.usuario_edicao = ""
+                self.nova_senha_input = ""
+                self.nova_senha_confirmacao = ""
+                return rx.toast("Erro: Usuário não encontrado.", color_scheme="red", position="top-right")
