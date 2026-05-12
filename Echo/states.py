@@ -162,7 +162,7 @@ class AppState(rx.State):
     novo_ativo_ip: str = ""
     novo_ativo_local: str = ""
 
-    usuario_logado: str = rx.LocalStorage("", name="echo_session_token")
+    usuario_logado: str = rx.LocalStorage("", name="echo_session_user")
     role_logado: str = rx.LocalStorage("operador", name="echo_user_role")
     token_logado: str = rx.LocalStorage("", name="echo_session_token")
     usuario_input: str = ""
@@ -236,6 +236,8 @@ class AuthState(AppState):
                     self.usuario_input = ""
                     self.senha_input = ""
 
+                    print(f"Token local: {self.token_logado} | Token banco: {user.session_token}")
+
                     yield rx.redirect("/")
                     return
 
@@ -258,32 +260,35 @@ class AuthState(AppState):
         return rx.redirect("/login")
 
     @rx.event
-    def verificar_acesso(self):
+    async def verificar_acesso(self):
         """O Novo Guarda-Costas: Verifica banco vazio -> Login -> Painel"""
         with rx.session() as session:
             # Se não existe NENHUM usuário no banco, força a ir para a tela de Setup
             if not session.exec(User.select()).first():
+                print("Nenhum usuário encontrado no banco de dados. Redirecionando para a tela de configuração inicial.")
                 self.usuario_logado, self.token_logado = "", ""
                 return rx.redirect("/setup")
                 
-        # Se existem usuários, mas o navegador não tem sessão, vai pro Login
-        if not self.usuario_logado or not self.token_logado:
-            return rx.redirect("/login")
-        
-        user = session.exec(User.select().where(User.username == self.usuario_logado)).first()
-            
-        if user:
-            # O PULO DO GATO: Se o token do navegador for diferente do banco, 
-            # significa que outro PC fez login com essa conta depois de nós!
-            if user.session_token != self.token_logado:
-                self.usuario_logado, self.token_logado = "", ""
-                print("Acesso negado: Token de sessão inválido. Outro login detectado para este usuário.")
+            # Se existem usuários, mas o navegador não tem sessão, vai pro Login
+            if not self.usuario_logado or not self.token_logado:
+                print("Acesso negado: Nenhuma sessão ativa encontrada no navegador.")
                 return rx.redirect("/login")
-            
-            self.role_logado = user.role
-        else:
-            self.usuario_logado, self.token_logado = "", ""
-            return rx.redirect("/login")
+    
+            user = session.exec(User.select().where(User.username == self.usuario_logado)).first()
+
+            if user:
+                # O PULO DO GATO: Se o token do navegador for diferente do banco, 
+                # significa que outro PC fez login com essa conta depois de nós!
+                if user.session_token != self.token_logado:
+                    print("Acesso negado: Token de sessão inválido. Outro login detectado para este usuário.")
+                    self.usuario_logado, self.token_logado = "", ""   
+                    return rx.redirect("/login")
+
+                self.role_logado = user.role
+            else:
+                print("Acesso negado: Usuário não encontrado no banco de dados.")
+                self.usuario_logado, self.token_logado = "", ""
+                return rx.redirect("/login")
 
     @rx.event
     def checar_acesso_login(self):
