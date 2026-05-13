@@ -29,7 +29,7 @@ class User(rx.Model, table=True):
     role: str = "operador" # "admin" ou "operador"
     session_token: str = ""
 
-class AtivoRede(pydantic.BaseModel):
+class AtivoRede(rx.Model):
     nome: str
     ip: str
     local: str
@@ -38,6 +38,15 @@ class AtivoRede(pydantic.BaseModel):
     qnt_pings: int = 0
     status: str = "Aguardando..."
     historico: list[dict[str, str | float]] = []
+
+class AtivoDB(rx.Model, table=True):
+    nome: str
+    ip: str = Field(index=True, unique=True)
+    local: str
+    status: str = "Aguardando..."
+
+class EmailDB(rx.Model, table=True):
+    endereco: str = Field(index=True, unique=True)
 
 def disparar_email(ativos, destinatarios):
     # Travas de segurança: não tenta enviar se faltar dados
@@ -117,68 +126,57 @@ def disparar_email(ativos, destinatarios):
         print(f"Falha crítica ao enviar o e-mail: {e}")
 
 def carregar_ativos():
-    if os.path.exists('Echo/ips.json'):
-        print("Carregando ativos de ips.json...")
-
-        with open('Echo/ips.json', 'r', encoding='utf-8') as f:
-            dados = json.load(f)
-            return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in dados]
-    else:
-        print("Arquivo ips.json não encontrado. Criando arquivo de exemplo...")
-
-        os.makedirs('Echo', exist_ok=True)
-
-        with open('Echo/ips.json', 'w', encoding='utf-8') as f:
-            exemplo = [{"nome": "Google", "ip": "8.8.8.8", "local": "N/A"},{"nome": "Cloudflare", "ip": "1.1.1.1", "local": "N/A"}]
-            json.dump(exemplo, f)
-
-        return [AtivoRede(nome=item['nome'], ip=item['ip'], local=item['local']) for item in exemplo]
+    with rx.session() as session:
+        registros = session.exec(AtivoDB.select()).all()
+        return [AtivoRede(nome=a.nome, ip=a.ip, local=a.local, status=a.status) for a in registros]
 
 def carregar_emails():
-    if os.path.exists('Echo/emails.json'):
-        print("Carregando emails de emails.json...")
-        with open('Echo/emails.json', 'r', encoding='utf-8') as f:
-            return json.load(f) 
-    else:
-        print("Arquivo emails.json não encontrado. Criando arquivo de exemplo...")
-        os.makedirs('Echo', exist_ok=True)
-        exemplo = ["exemplo@dominio.com"]
-        with open('Echo/emails.json', 'w', encoding='utf-8') as f:
-            json.dump(exemplo, f)
-        return exemplo
+    with rx.session() as session:
+        registros = session.exec(EmailDB.select()).all()
+        return [e.endereco for e in registros]
 
 # 1. ESTADO BASE
 class AppState(rx.State):
     """Estado principal do qual todos os outros herdam."""
 
-    ativos: list[AtivoRede] = carregar_ativos() # Função externa
+    # Variáveis de monitoramento e ativos
+    ativos: list[AtivoRede] = [] 
     ativos_buffer: list[dict[str, str]] = []
     
+    # Variáveis de e-mails
+    emails: list[str] = []
+    novo_email_input: str = ""
+
+    # Variaveis de controle de loops assíncronos
     monitorando: bool = False
     loop_relatorio_ativo: bool = False
     ciclo_atual: int = 0
 
+    # Variáveis do formulário de novo ativo
     novo_ativo_nome: str = ""
     novo_ativo_ip: str = ""
     novo_ativo_local: str = ""
 
+    # Variaveis de autenticação e sessão
     usuario_logado: str = rx.LocalStorage("", name="echo_session_user")
     role_logado: str = rx.LocalStorage("operador", name="echo_user_role")
     token_logado: str = rx.LocalStorage("", name="echo_session_token")
     usuario_input: str = ""
     senha_input: str = ""
 
+    # Variáveis de setup inicial
     setup_username: str = "admin" # Sugestão padrão
     setup_password: str = ""
     setup_confirmacao: str = ""
 
     lista_usuarios: list[dict[str, str | int]] = []
     
-    # Variáveis do formulário
+    # Variáveis do formulário de novo usuário
     form_username: str = ""
     form_password: str = ""
     form_is_admin: bool = False
 
+    # Variáveis de edição de senha
     usuario_edicao: str = ""
     nova_senha_input: str = ""
     nova_senha_confirmacao: str = ""
@@ -195,10 +193,6 @@ class AppState(rx.State):
         "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60))
     }
     config_buffer: dict[str, str | int] = config.copy()
-
-    # --- E-mails ---
-    emails: list[str] = carregar_emails() # Função externa
-    novo_email_input: str = ""
     
     @rx.event
     def set_novo_attr(self, atributo: str, valor: str):
@@ -363,29 +357,62 @@ class ConfigState(AppState):
             f.write(conteudo_env)
             
     @rx.event
+    def carregar_emails(self):
+        """Puxa os e-mails salvos diretamente do SQLite."""
+        with rx.session() as session:
+            registros = session.exec(EmailDB.select()).all()
+            self.emails = [e.endereco for e in registros]
+
+    @rx.event
     def adicionar_email(self):
-        if self.novo_email_input and self.novo_email_input not in self.emails:
-            self.emails.append(self.novo_email_input)
-            self.novo_email_input = ""
-            self.salvar_emails()
+        """Salva um novo e-mail no banco."""
+        email_limpo = self.novo_email_input.strip().lower()
+        if not email_limpo or "@" not in email_limpo:
+            return rx.toast.error("E-mail inválido.", position="top-right")
+        
+        with rx.session() as session:
+            existe = session.exec(EmailDB.select().where(EmailDB.endereco == email_limpo)).first()
+            if not existe:
+                novo = EmailDB(endereco=email_limpo)
+                session.add(novo)
+                session.commit()
+                
+                self.novo_email_input = ""
+                self.carregar_emails()
+                return rx.toast.success("E-mail adicionado ao banco!", position="top-right")
+            else:
+                return rx.toast.warning("Este e-mail já está cadastrado.", position="top-right")
 
     @rx.event
     def remover_email(self, email_alvo: str):
-        if email_alvo in self.emails:
-            self.emails.remove(email_alvo)
-            self.salvar_emails()
-
-    def salvar_emails(self):
-        with open('Echo/emails.json', 'w', encoding='utf-8') as f:
-            json.dump(self.emails, f)
+        """Deleta o e-mail do banco de dados."""
+        with rx.session() as session:
+            registro = session.exec(EmailDB.select().where(EmailDB.endereco == email_alvo)).first()
+            if registro:
+                session.delete(registro)
+                session.commit()
+                self.carregar_emails()
 
 # 4. ESTADO DE MONITORAMENTO
 class MonitoramentoState(AppState):
     """Gerencia exclusivamente os pings, ativos e relatórios."""
 
+    @rx.event
+    def carregar_ativos(self):
+        """Puxa os ativos da tabela do SQLite e prepara para os gráficos."""
+        with rx.session() as session:
+            registros = session.exec(AtivoDB.select()).all()
+            self.ativos = [
+                AtivoRede(
+                    nome=a.nome, ip=a.ip, local=a.local, status=a.status, 
+                    latencia=0.0, latencia_total=0.0, qnt_pings=0, historico=[]
+                ) for a in registros
+            ]
+            self.ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in registros]
+
     def on_load(self):
         """Inicializa o buffer com os ativos existentes"""
-        self.ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in self.ativos]
+        self.carregar_ativos()
 
     @rx.event
     def reiniciar_sistema_local(self):
@@ -426,16 +453,27 @@ class MonitoramentoState(AppState):
         
     @rx.event
     def salvar_ativos(self):
-        with open('Echo/ips.json', 'w', encoding='utf-8') as f:
-            json.dump(self.ativos_buffer, f)
+        """Salva a lista do buffer diretamente no Banco de Dados (sem JSON)"""
+        with rx.session() as session:
+            # 1. Apaga a tabela antiga
+            todos_antigos = session.exec(AtivoDB.select()).all()
+            for antigo in todos_antigos:
+                session.delete(antigo)
             
-        novos_ativos = []
-        for item in self.ativos_buffer:
-            novos_ativos.append(AtivoRede(
-                nome=item['nome'], ip=item['ip'], local=item['local'], status="Aguardando...",
-                latencia=0.0, latencia_total=0.0, qnt_pings=0, historico=[]
-            ))
-        self.ativos = novos_ativos
+            # 2. Insere os ativos que estão no painel de edição
+            for item in self.ativos_buffer:
+                novo_ativo = AtivoDB(
+                    nome=item['nome'], 
+                    ip=item['ip'], 
+                    local=item['local'], 
+                    status="Aguardando..."
+                )
+                session.add(novo_ativo)
+                
+            session.commit()
+            
+        self.carregar_ativos() # Atualiza a memória baseada no banco
+        yield rx.toast.success("Ativos salvos no Banco de Dados!", position="top-right")
 
     @rx.event
     def parar_monitoramento(self):
@@ -615,11 +653,11 @@ class UserManagementState(AppState):
     def salvar_nova_senha(self):
         """Valida as senhas, gera o novo Hash e salva no banco de dados."""
         if not self.nova_senha_input or not self.nova_senha_confirmacao:
-            return rx.toast("Preencha ambos os campos de senha.", color_scheme="red", position="top-right")
+            return rx.toast.error("Preencha ambos os campos de senha.", position="top-right")
 
         # VALIDAÇÃO DE CONFIRMAÇÃO
         if self.nova_senha_input != self.nova_senha_confirmacao:
-            return rx.toast("As senhas não coincidem. Tente novamente.", color_scheme="red", position="top-right")
+            return rx.toast.error("As senhas não coincidem. Tente novamente.", position="top-right")
 
         with rx.session() as session:
             user = session.exec(User.select().where(User.username == self.usuario_edicao)).first()
@@ -634,10 +672,10 @@ class UserManagementState(AppState):
                 
                 self.usuario_edicao = ""
                 self.nova_senha_input = ""
-                self.nova_senha_confirmacao = ""
-                return rx.toast(f"Senha de '{self.usuario_edicao}' alterada!", color_scheme="green", position="top-right")
+                self.nova_senha_confirmacao = ""    
+                return rx.toast.success(f"Senha de '{user.username}' alterada!", position="top-right")
             else:
                 self.usuario_edicao = ""
                 self.nova_senha_input = ""
                 self.nova_senha_confirmacao = ""
-                return rx.toast("Erro: Usuário não encontrado.", color_scheme="red", position="top-right")
+                return rx.toast.error("Usuário não encontrado.", position="top-right")

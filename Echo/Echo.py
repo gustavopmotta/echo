@@ -369,6 +369,63 @@ def configurações_ativos() -> rx.Component:
 
 # --- CAIXA DE CONFIGURAÇÕES DE USUÁRIOS ---
 def configurações_usuarios() -> rx.Component:
+    def modal_edicao_senha() -> rx.Component:
+        return rx.alert_dialog.root(
+            rx.alert_dialog.content(
+                rx.alert_dialog.title("Alterar Senha"),
+                rx.alert_dialog.description(
+                    "Digite a nova senha para o usuário: ",
+                    rx.text(UserManagementState.usuario_edicao, weight="bold", as_="span"),
+                    "."
+                ),
+
+                rx.vstack(
+                    rx.input(
+                        rx.input.slot(rx.icon("lock", color="gray")),
+                        placeholder="Nova senha",
+                        type="password",
+                        value=UserManagementState.nova_senha_input,
+                        on_change=lambda v: UserManagementState.set_novo_attr("nova_senha_input", v),
+                        width="100%"
+                    ),
+                    rx.input(
+                        rx.input.slot(rx.icon("check", color="gray")),
+                        placeholder="Confirme a senha",
+                        type="password",
+                        value=UserManagementState.nova_senha_confirmacao,
+                        on_change=lambda v: UserManagementState.set_novo_attr("nova_senha_confirmacao", v),
+                        width="100%"
+                    ),
+                    spacing="3",
+                    margin_y="1em"
+                ),
+
+                rx.flex(
+                    rx.alert_dialog.cancel(
+                        rx.button(
+                            "Cancelar", 
+                            on_click=UserManagementState.cancelar_edicao, 
+                            color_scheme="gray", 
+                            variant="soft"
+                        )
+                    ),
+                    rx.alert_dialog.action(
+                        rx.button(
+                            "Salvar Senha", 
+                            on_click=UserManagementState.salvar_nova_senha, 
+                            color_scheme="green"
+                        )
+                    ),
+                    spacing="3",
+                    justify="end"
+                ),
+
+                width="25%",
+            ),
+            # A MÁGICA ESTÁ AQUI: O modal reage à variável do seu states.py
+            open=UserManagementState.usuario_edicao != "",
+        )
+
     return rx.dialog.root(
         rx.dialog.trigger(rx.button(rx.icon("users"), "Usuários", color_scheme="orange", variant="surface")),
 
@@ -388,14 +445,14 @@ def configurações_usuarios() -> rx.Component:
                                     rx.text(u["username"], font_weight="bold"),
                                     rx.hstack(
                                         rx.badge(
-                                            rx.icon(rx.cond(u["role"] == "admin", "crown", "database"), size=16, stroke_width=2),
-                                            rx.cond(u["role"] == "admin", "Admin", "Operador"),
-                                            color_scheme=rx.cond(u["role"] == "admin", "yellow", "blue"),
-                                            radius="full",
+                                            rx.cond(u["role"] == "admin", "Administrador", "Operador"),
+                                            color_scheme=rx.cond(u["role"] == "admin", "amber", "blue"),
+                                            radius="small",
                                         ),
                                         rx.cond(UserManagementState.usuario_logado == u["username"],
-                                            rx.badge(rx.icon("user", size=16), "Usuário Atual", color_scheme="green", radius="full")
+                                            rx.badge("Usuário Atual", color_scheme="green", radius="small")
                                         ),
+                                        spacing="1"
                                     ),
                                     spacing="1",
                                     align_items="start"
@@ -405,8 +462,8 @@ def configurações_usuarios() -> rx.Component:
                                     (UserManagementState.usuario_logado == u["username"]) | (UserManagementState.role_logado == "admin"),
                                     rx.hstack(
                                         # Botão da chave abre o formulário
-                                        rx.icon_button(rx.icon("key"), on_click=UserManagementState.iniciar_edicao_senha(u["username"]), color_scheme="blue", variant="outline"),
-                                        rx.icon_button(rx.icon("trash"), on_click=UserManagementState.deletar_usuario(u["username"]), color_scheme="red", variant="outline"),
+                                        rx.tooltip(rx.icon_button(rx.icon("key"), on_click=UserManagementState.iniciar_edicao_senha(u["username"]), color_scheme="blue", variant="soft"), content="Alterar Senha"),
+                                        rx.tooltip(rx.icon_button(rx.icon("trash"), on_click=UserManagementState.deletar_usuario(u["username"]), color_scheme="red", variant="soft"), content="Deletar Usuário"),
                                     ),
                                 ),
                                 width="100%", align_items="center"
@@ -461,6 +518,8 @@ def configurações_usuarios() -> rx.Component:
                 width="100%",
                 variant="surface"
             ),
+            modal_edicao_senha(),
+
             width="30%",
         ),
     ),
@@ -523,104 +582,13 @@ def index() -> rx.Component:
                 ),
 
                 # Configurações de usuários
-                rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("users"), "Usuários", color_scheme="orange", variant="surface")),
-
-                    rx.dialog.content(
-                        rx.dialog.title("Gerenciar Usuários", padding_top="1em"),
-                        rx.dialog.description("Crie ou remova credenciais de acesso ao painel."),
-                        rx.divider(margin_y="1em"),
+                configurações_usuarios(),
                     
-                        # Lista de usuários existentes
-                        rx.scroll_area(
-                            rx.vstack(
-                                rx.foreach(
-                                    UserManagementState.lista_usuarios,
-                                    lambda u: rx.card(
-                                        rx.hstack(
-                                            rx.vstack(
-                                                rx.text(u["username"], font_weight="bold"),
-                                                rx.hstack(
-                                                    rx.badge(
-                                                        rx.icon(rx.cond(u["role"] == "admin", "crown", "database"), size=16, stroke_width=2),
-                                                        rx.cond(u["role"] == "admin", "Admin", "Operador"),
-                                                        color_scheme=rx.cond(u["role"] == "admin", "yellow", "blue"),
-                                                        radius="full",
-                                                    ),
-                                                    rx.cond(UserManagementState.usuario_logado == u["username"],
-                                                        rx.badge(rx.icon("user", size=16), "Usuário Atual", color_scheme="green", radius="full")
-                                                    ),
-                                                ),
-                                                spacing="1",
-                                                align_items="start"
-                                            ),
-                                            rx.spacer(),
-                                            rx.cond(
-                                                (UserManagementState.usuario_logado == u["username"]) | (UserManagementState.role_logado == "admin"),
-                                                rx.hstack(
-                                                    # Botão da chave abre o formulário
-                                                    rx.icon_button(rx.icon("key"), on_click=UserManagementState.iniciar_edicao_senha(u["username"]), color_scheme="blue", variant="outline"),
-                                                    rx.icon_button(rx.icon("trash"), on_click=UserManagementState.deletar_usuario(u["username"]), color_scheme="red", variant="outline"),
-                                                ),
-                                            ),
-                                            width="100%", align_items="center"
-                                        ),
-                                        width="100%"
-                                    )
-                                ),
-                                width="100%",
-                                padding_bottom="1em"
-                            ),
-                            type="scroll", style={"max_height": "30vh"}
-                        ),
-                    
-                        rx.divider(margin_y="1em"),
-                    
-                        # Formulário de Adição
-                        rx.card(
-                            rx.text("Criar Novo Usuário", font_weight="bold", margin_bottom="1em"),
-                            rx.vstack(
-                                rx.input(
-                                    rx.input.slot(rx.icon("mail", color="gray")),
-                                    placeholder="Email", 
-                                    value=UserManagementState.form_username, 
-                                    on_change=lambda v: UserManagementState.set_novo_attr("form_username", v),
-                                    width="100%"
-                                ),
-                                rx.input(
-                                    rx.input.slot(rx.icon("lock", color="gray")),
-                                    placeholder="Senha", 
-                                    type="password", 
-                                    value=UserManagementState.form_password, 
-                                    on_change=lambda v: UserManagementState.set_novo_attr("form_password", v),
-                                    width="100%"
-                                ),
-                                rx.cond(UserManagementState.role_logado == "admin",
-                                    rx.checkbox(
-                                        "Administrador", 
-                                        checked=UserManagementState.form_is_admin, 
-                                        on_change=lambda v: UserManagementState.set_novo_attr("form_is_admin", v)
-                                    ),
-                                ),
-                                rx.button(
-                                    rx.icon("user-plus"), 
-                                    "Adicionar Usuário", 
-                                    on_click=UserManagementState.adicionar_usuario, 
-                                    color_scheme="green", 
-                                    width="100%"
-                                ),
-
-                                align_items="start", width="100%", spacing="3"
-                            ),
-                            width="100%",
-                            variant="surface"
-                        ),
-                        width="30%",
-                    ),
-                ),
-            
                 # Logoff
-                rx.icon_button(rx.icon("door_open"), on_click=AuthState.fazer_logout, color_scheme="red", variant="surface"),
+                rx.tooltip(
+                    rx.icon_button(rx.icon("door_open"), on_click=AuthState.fazer_logout, color_scheme="red", variant="surface"),
+                    content="Sair"
+                ),
             ),
             
             rx.divider(margin_y="1em"),
@@ -644,10 +612,11 @@ def index() -> rx.Component:
 app = rx.App()
 # Aciona o on_load e o loop de email no MonitoramentoState
 app.add_page(tela_setup_inicial, route="/setup", title="Configuração Inicial - Echo")
-app.add_page(tela_login, route="/login", title="Login - Echo")
+app.add_page(tela_login, route="/login", title="Login - Echo", on_load=AuthState.checar_acesso_login)
 app.add_page(index, title="Painel - Echo", on_load=[
     AuthState.verificar_acesso,
-    MonitoramentoState.on_load, 
+    MonitoramentoState.on_load,
     MonitoramentoState.loop_relatorio,
     UserManagementState.carregar_usuarios,
+    ConfigState.carregar_emails,
 ])
