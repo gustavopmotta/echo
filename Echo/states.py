@@ -24,12 +24,14 @@ if not os.path.exists("Echo/config.env"):
 load_dotenv("Echo/config.env")
 
 class User(rx.Model, table=True):
+    """Tabela para armazenar os usuários no banco de dados SQLite."""
     username: str = Field(index=True, unique=True)
     password: str
     role: str = "operador" # "admin" ou "operador"
     session_token: str = ""
 
 class AtivoRede(rx.Model):
+    """Modelo para representar os ativos de rede em memória durante o monitoramento."""
     nome: str
     ip: str
     local: str
@@ -40,13 +42,19 @@ class AtivoRede(rx.Model):
     historico: list[dict[str, str | float]] = []
 
 class AtivoDB(rx.Model, table=True):
+    """Tabela para armazenar os ativos de rede no banco de dados SQLite."""
     nome: str
     ip: str = Field(index=True, unique=True)
     local: str
     status: str = "Aguardando..."
 
 class EmailDB(rx.Model, table=True):
+    """Tabela para armazenar os e-mails de destino no banco de dados SQLite."""
     endereco: str = Field(index=True, unique=True)
+
+class SetorDB(rx.Model, table=True):
+    """Tabela para armazenar setores no banco de dados SQLite."""
+    nome: str = Field(index=True, unique=True)
 
 def disparar_email(ativos, destinatarios):
     # Travas de segurança: não tenta enviar se faltar dados
@@ -142,6 +150,11 @@ class AppState(rx.State):
     # Variáveis de monitoramento e ativos
     ativos: list[AtivoRede] = [] 
     ativos_buffer: list[dict[str, str]] = []
+
+    # Variáveis de setores
+    setores: list[str] = []
+    novo_setor_input: str = ""
+    filtro_setor_atual: str = "Todos"
     
     # Variáveis de e-mails
     emails: list[str] = []
@@ -333,6 +346,7 @@ class AuthState(AppState):
 class ConfigState(AppState):
     """Gerencia exclusivamente as variáveis de ambiente e e-mails."""
 
+    # --- CONFIGURAÇÕES GERAIS ---
     @rx.event
     def atualizar_buffer(self, chave: str, valor: str):
         chaves_numericas = ["smtp_port", "intervalo_segundos", "limite_latencia_ms", "pings_maximos", "frequencia_emails"]
@@ -355,7 +369,8 @@ class ConfigState(AppState):
         conteudo_env = "\n".join([f"{k.upper()}={self.config[k]}" for k in chaves]) + "\n"
         with open("Echo/config.env", "w", encoding="utf-8") as f:
             f.write(conteudo_env)
-            
+    
+    # --- EMAILS ---
     @rx.event
     def carregar_emails(self):
         """Puxa os e-mails salvos diretamente do SQLite."""
@@ -367,12 +382,14 @@ class ConfigState(AppState):
     def adicionar_email(self):
         """Salva um novo e-mail no banco."""
         email_limpo = self.novo_email_input.strip().lower()
+
         if not email_limpo or "@" not in email_limpo:
             return rx.toast.error("E-mail inválido.", position="top-right")
         
         with rx.session() as session:
-            existe = session.exec(EmailDB.select().where(EmailDB.endereco == email_limpo)).first()
-            if not existe:
+            registro = session.exec(EmailDB.select().where(EmailDB.endereco == email_limpo)).first()
+
+            if not registro:
                 novo = EmailDB(endereco=email_limpo)
                 session.add(novo)
                 session.commit()
@@ -392,6 +409,47 @@ class ConfigState(AppState):
                 session.delete(registro)
                 session.commit()
                 self.carregar_emails()
+
+    # --- SETORES ---
+    @rx.event
+    def carregar_setores(self):
+        with rx.session() as session:
+            registros = session.exec(SetorDB.select()).all()
+            self.setores = [s.nome for s in registros]
+
+    @rx.event
+    def adicionar_setor(self):
+        setor_limpo = self.novo_setor_input.strip().upper() # Padroniza tudo em maiúsculo (ex: TI, GALPÃO)
+        
+        if not setor_limpo: return
+        
+        with rx.session() as session:
+            registro = session.exec(SetorDB.select().where(SetorDB.nome == setor_limpo)).first()
+
+            if not registro:
+                novo = SetorDB(nome=setor_limpo)
+                session.add(novo)
+                session.commit()
+
+                self.novo_setor_input = ""
+                self.carregar_setores()
+
+                return rx.toast.success("Setor adicionado!", position="top-right")
+            return rx.toast.warning("Setor já existe.", position="top-right")
+
+    @rx.event
+    def remover_setor(self, setor_alvo: str):
+        if setor_alvo == "Nenhum":
+            return rx.toast.error("O setor padrão não pode ser apagado.", position="top-right")
+            
+        with rx.session() as session:
+            registro = session.exec(SetorDB.select().where(SetorDB.nome == setor_alvo)).first()
+
+            if registro:
+                session.delete(registro)
+                session.commit()
+
+                self.carregar_setores()
 
 # 4. ESTADO DE MONITORAMENTO
 class MonitoramentoState(AppState):
@@ -460,6 +518,8 @@ class MonitoramentoState(AppState):
             for antigo in todos_antigos:
                 session.delete(antigo)
             
+            session.commit()
+
             # 2. Insere os ativos que estão no painel de edição
             for item in self.ativos_buffer:
                 novo_ativo = AtivoDB(
@@ -596,8 +656,9 @@ class UserManagementState(AppState):
 
         with rx.session() as session:
             # Verifica se já existe
-            existente = session.exec(User.select().where(User.username == self.form_username.lower().strip())).first()
-            if existente:
+            registro = session.exec(User.select().where(User.username == self.form_username.lower().strip())).first()
+            
+            if registro:
                 yield rx.toast.error("Esse nome de usuário já existe.", position="top-right")
                 return
 

@@ -153,7 +153,7 @@ def tela_setup_inicial() -> rx.Component:
         height="100vh"
     )
 
-# --- CAIXA DE CONFIGURAÇÕES GERAIS ---
+# --- CAIXA/ABA DE CONFIGURAÇÕES GERAIS ---
 def configurações_gerais() -> rx.Component:
     return rx.tabs.content(
         rx.dialog.title("Configurações Gerais", padding_top="1em"),
@@ -267,7 +267,7 @@ def configurações_gerais() -> rx.Component:
         value="config"
     ),
 
-# --- CAIXA DE CONFIGURAÇÕES DE EMAILS ---
+# --- CAIXA/ABA DE CONFIGURAÇÕES DE EMAILS ---
 def configurações_emails() -> rx.Component:
     return rx.tabs.content(
         rx.dialog.title("Cadastro de Emails", padding_top="1em"),
@@ -310,8 +310,112 @@ def configurações_emails() -> rx.Component:
         value="emails"
     ),
 
-# --- CAIXA DE CONFIGURAÇÕES DE ATIVOS ---
+# --- CAIXA/ABA DE CONFIGURAÇÕES DE ATIVOS ---
 def configurações_ativos() -> rx.Component:
+    def modal_adicionar_ativo() -> rx.Component:
+        return rx.alert_dialog.root(
+            rx.alert_dialog.trigger(rx.button(rx.icon("plus"), "Adicionar Ativo", color_scheme="green", flex="1")),
+
+            rx.alert_dialog.content(
+                rx.alert_dialog.title("Adicionar Ativo de Rede"),
+                rx.alert_dialog.description("Preencha os detalhes do dispositivo que deseja monitorar."),
+
+                rx.divider(margin_y="1em"),
+
+                rx.vstack(
+                    rx.hstack(
+                        rx.input(
+                            rx.input.slot(rx.icon("tag")),
+                            placeholder="Nome do Ativo", 
+                            on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_nome", v), 
+                            value=MonitoramentoState.novo_ativo_nome,
+                            width="100%"
+                        ),
+                        rx.input(
+                            rx.input.slot(rx.icon("network")),
+                            placeholder="Endereço IP", 
+                            on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_ip", v), 
+                            value=MonitoramentoState.novo_ativo_ip,
+                            width="100%"
+                        ),
+                    ),
+                    rx.input(
+                        rx.input.slot(rx.icon("map_pin")),
+                        placeholder="Localização", 
+                        on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_local", v), 
+                        value=MonitoramentoState.novo_ativo_local,
+                        width="100%"
+                    ),
+
+                    rx.flex(
+                        rx.alert_dialog.cancel(
+                            rx.button(
+                                "Cancelar", 
+                                color_scheme="gray", 
+                                variant="soft"
+                            )
+                        ),
+                        rx.alert_dialog.action(
+                            rx.button(
+                                "Adicionar", 
+                                on_click=MonitoramentoState.adicionar_ativo_buffer, 
+                                color_scheme="green"
+                            ),
+                        ),
+
+                        spacing="3",
+                        justify="end",
+                        width="100%",
+                    ),
+
+                    spacing="3",
+                ),
+
+                width="30%",
+                open=MonitoramentoState.novo_ativo_nome != ""
+            ),
+        ),
+
+    def modal_gerenciar_grupos() -> rx.Component:
+        return rx.alert_dialog.root(
+            rx.alert_dialog.trigger(rx.button(rx.icon("tags"), "Gerenciar Grupos", color_scheme="gray", variant="soft", flex="1")),
+
+            rx.alert_dialog.content(
+                rx.alert_dialog.title("Gerenciar Grupos de Ativos"),
+                rx.alert_dialog.description("Organize seus ativos em grupos para facilitar o monitoramento."),
+
+                rx.scroll_area(
+                    rx.vstack(
+                        rx.foreach(
+                            ConfigState.setores, 
+                            lambda setor: rx.card(
+                                rx.hstack(
+                                    rx.text(setor, width="100%"),
+                                    rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_setor(setor), color_scheme="red", variant="ghost"),
+                                    width="100%",
+                                    align_items="center",
+                                ),
+                            )
+                        ),
+                        spacing="2",
+                        padding_right="0.1em",
+                    ),
+
+                    rx.divider(margin_y="1em"),
+
+                    rx.input(
+                        rx.input.slot(rx.icon("tag")),
+                        placeholder="Novo Setor",
+                    ),
+
+                    type="scroll",
+                    style={"max_height": "30vh"},
+                ),
+
+                width="30%",
+            ),
+        )
+
     return rx.tabs.content(
         rx.dialog.title("Gerenciar Ativos de Rede", padding_top="1em"),
         rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado durante a edição."),
@@ -320,43 +424,50 @@ def configurações_ativos() -> rx.Component:
 
         rx.vstack(
             # Lista de ativos no buffer
-            rx.foreach(
-                MonitoramentoState.ativos_buffer, 
-                lambda ativo: rx.card(
-                    rx.hstack(
-                        rx.vstack(
-                            rx.text(ativo["nome"], font_weight="bold"),
-                            rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
-                            spacing="0",
-                            align_items="start",
-                            width="100%"
-                        ),
+            rx.scroll_area(
+                rx.vstack(
+                    rx.foreach(
+                        MonitoramentoState.ativos_buffer, 
+                        lambda ativo: rx.card(
+                            rx.hstack(
+                                rx.vstack(
+                                    rx.text(ativo["nome"], font_weight="bold"),
+                                    rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
+                                    spacing="0",
+                                    align_items="start",
+                                    width="100%"
+                                ),
 
-                        rx.icon_button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="ghost"),
+                                rx.icon_button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer   (ativo ["ip"]), color_scheme="red", variant="ghost"),
 
-                        width="100%",
-                        align_items="center",
+                                width="100%",
+                                align_items="center",
+                            ),
+
+                            width="100%",
+                        )
                     ),
 
-                    border_top="4px solid var(--blue-7)",
-                )
+                    spacing="2",
+                    padding_right="0.1em",
+                ),
+
+                type="scroll",
+                style={"max_height": "40vh"},
+                padding_right="1em",
             ),
 
             rx.divider(margin_y="1em"),
-            rx.card(
-                rx.text("Adicionar Novo Ativo:", size="3", font_weight="bold", padding_bottom="0.5em"),
-                rx.hstack(
-                    rx.input(placeholder="Nome", on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_nome", v), value=MonitoramentoState.novo_ativo_nome),
+            
+            rx.hstack(
+                modal_adicionar_ativo(),
 
-                    rx.input(placeholder="IP", on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_ip", v), value=MonitoramentoState.novo_ativo_ip),
+                modal_gerenciar_grupos(),
 
-                    rx.input(placeholder="Local", on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_local", v), value=MonitoramentoState.novo_ativo_local),
-                    
-                    rx.icon_button(rx.icon("plus"), on_click=MonitoramentoState.adicionar_ativo_buffer, color_scheme="green"),
-
-                    width="100%"
-                ),
+                width="100%",
+                spacing="3"
             ),
+            
             align_items="stretch",
             width="100%",
             padding_bottom="1em",
@@ -364,7 +475,7 @@ def configurações_ativos() -> rx.Component:
         # Botões de Ação do Modal
         rx.button("Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos, color_scheme="blue",justify_self="end", width="100%"),
 
-        value="ativos"
+        value="ativos",
     ),
 
 # --- CAIXA DE CONFIGURAÇÕES DE USUÁRIOS ---
