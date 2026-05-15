@@ -1,6 +1,8 @@
 import reflex as rx
 from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, User
 
+radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'brown', 'orange', 'sky', 'mint', 'lime', 'yellow', 'amber', 'gold', 'bronze', 'gray']
+
 # --- CARD ---
 def renderizar_card(ativo: AtivoRede):
     cor_borda = rx.cond(ativo.status == "Online", "green", 
@@ -30,7 +32,12 @@ def renderizar_card(ativo: AtivoRede):
         rx.vstack(
             rx.hstack(
                 rx.vstack(
-                    rx.heading(ativo.nome, size="4"),
+                    rx.hstack(
+                        rx.heading(ativo.nome, size="4"),
+                        rx.badge(ativo.grupo, color_scheme=ativo.cor_grupo, variant="soft"),
+                        align_items="center",
+                    ),
+                    
                     rx.flex(
                         rx.text(f"IP: {ativo.ip}", color="gray"),
                         rx.text(f"Local: {ativo.local}", color="gray", size="1"),
@@ -166,41 +173,57 @@ def configurações_gerais() -> rx.Component:
             rx.vstack(
                 # SEÇÃO 1: SERVIDOR DE E-MAIL
                 rx.text("Servidor de E-mail (SMTP)", weight="bold", padding_top="0.5em"),
-                rx.grid(
+                rx.hstack(
                     rx.vstack(
                         rx.text("Servidor SMTP:", size="2"),
                         rx.input(
                             value=AppState.config_buffer["smtp_server"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_server", v),
-                            placeholder="mail.dominio.com.br"
+                            placeholder="mail.dominio.com.br",
+                            width="100%"
                         ),
+                        spacing="1",
+                        flex="1",
                     ),
                     rx.vstack(
                         rx.text("Porta SMTP:", size="2"),
                         rx.input(
                             value=AppState.config_buffer["smtp_port"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_port", v),
-                            placeholder="465"
+                            placeholder="465",
+                            width="100%"
                         ),
+                        spacing="1",
+                        flex="1"
                     ),
+                    spacing="2",
+                    width="100%",
+                ),
+
+                rx.hstack(
                     rx.vstack(
                         rx.text("Login:", size="2"),
                         rx.input(
                             value=AppState.config_buffer["smtp_login"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_login", v),
-                            placeholder="alertas@dominio.com.br"
+                            placeholder="alertas@dominio.com.br",
+                            width="100%"
                         ),
+                        spacing="1",
+                        flex="1"
                     ),
                     rx.vstack(
                         rx.text("Senha:", size="2"),
                         rx.input(
                             value=AppState.config_buffer["smtp_password"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_password", v),
-                            type="password", # Oculta os caracteres digitados
-                            placeholder="********"
+                            type="password",
+                            placeholder="********",
+                            width="100%"
                         ),
+                        spacing="1",
+                        flex="1"
                     ),
-                    columns="2",
                     spacing="2",
                     width="100%",
                 ),
@@ -209,43 +232,53 @@ def configurações_gerais() -> rx.Component:
 
                 # SEÇÃO 2: REGRAS DE MONITORAMENTO
                 rx.text("Regras de Monitoramento", weight="bold"),
-                rx.grid(
+                rx.hstack(
                     rx.vstack(
                         rx.text("Intervalo de Ping (segundos):", size="2"),
                         rx.input(
                             value=AppState.config_buffer["intervalo_segundos"],
                             on_change=lambda v: ConfigState.atualizar_buffer("intervalo_segundos", v),
-                            placeholder="10"
+                            placeholder="10",
+                            width="100%"
                         ),
+                        spacing="1",
+                        flex="1",
                     ),
                     rx.vstack(
                         rx.text("Latência Crítica (ms):", size="2"),
                         rx.input(
                             value=AppState.config_buffer["limite_latencia_ms"],
                             on_change=lambda v: ConfigState.atualizar_buffer("limite_latencia_ms", v),
-                            placeholder="100"
+                            placeholder="100",
+                            width="100%"
                         ),
+                        spacing="1",
+                        flex="1"
                     ),
+                ),
+                rx.hstack(
                     rx.vstack(
                         rx.text("Máximo Pings no Gráfico:", size="2"),
                         rx.input(
                             value=AppState.config_buffer["pings_maximos"],
                             on_change=lambda v: ConfigState.atualizar_buffer("pings_maximos", v),
-                            placeholder="12"
+                            placeholder="12",
+                            width="100%"
                         ),
+                        spacing="1",
+                        flex="1",
                     ),
                     rx.vstack(
                         rx.text("Frequência de E-mail (minutos):", size="2"),
                         rx.input(
                             value=AppState.config_buffer["frequencia_emails"],
                             on_change=lambda v: ConfigState.atualizar_buffer("frequencia_emails", v),
-                            placeholder="60"
+                            placeholder="60",
+                            width="100%"
                         ),
+                        spacing="1",
+                        flex="1"
                     ),
-                    columns="2",
-                    spacing="2",
-                    width="100%",
-                    justify="between",
                 ),
                 width="100%",
                 align_items="stretch",
@@ -329,8 +362,22 @@ def configurações_ativos() -> rx.Component:
                             placeholder="Nome do Ativo", 
                             on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_nome", v), 
                             value=MonitoramentoState.novo_ativo_nome,
-                            width="100%"
+                            flex="1",
                         ),
+                        rx.select.root(
+                            rx.select.trigger(placeholder="Grupo do Ativo"),
+                            rx.select.content(
+                                rx.foreach(
+                                    ConfigState.grupos, 
+                                    lambda g: rx.select.item(rx.badge(g["nome"], color_scheme=g["cor"]), value=g["nome"])
+                                ),
+                            ),
+                            default_value=MonitoramentoState.novo_ativo_grupo,
+                            on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_grupo", v),
+                        ),
+                        width="100%",
+                    ),
+                    rx.hstack(
                         rx.input(
                             rx.input.slot(rx.icon("network")),
                             placeholder="Endereço IP", 
@@ -338,13 +385,13 @@ def configurações_ativos() -> rx.Component:
                             value=MonitoramentoState.novo_ativo_ip,
                             width="100%"
                         ),
-                    ),
-                    rx.input(
-                        rx.input.slot(rx.icon("map_pin")),
-                        placeholder="Localização", 
-                        on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_local", v), 
-                        value=MonitoramentoState.novo_ativo_local,
-                        width="100%"
+                        rx.input(
+                            rx.input.slot(rx.icon("map_pin")),
+                            placeholder="Localização", 
+                            on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_local", v), 
+                            value=MonitoramentoState.novo_ativo_local,
+                            width="100%"
+                        ),
                     ),
 
                     rx.flex(
@@ -384,35 +431,65 @@ def configurações_ativos() -> rx.Component:
                 rx.alert_dialog.title("Gerenciar Grupos de Ativos"),
                 rx.alert_dialog.description("Organize seus ativos em grupos para facilitar o monitoramento."),
 
+                rx.divider(margin_y="1em"),
+
                 rx.scroll_area(
                     rx.vstack(
                         rx.foreach(
-                            ConfigState.setores, 
-                            lambda setor: rx.card(
+                            ConfigState.grupos, 
+                            lambda g: rx.card(
                                 rx.hstack(
-                                    rx.text(setor, width="100%"),
-                                    rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_setor(setor), color_scheme="red", variant="ghost"),
+                                    rx.text(g["nome"], width="100%"),
+                                    rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_grupo(g["nome"]), color_scheme="red", variant="ghost"),
                                     width="100%",
                                     align_items="center",
                                 ),
+                                border_top=f"4px solid var(--{g["cor"]}-9)",
+                                width="100%",
                             )
                         ),
                         spacing="2",
                         padding_right="0.1em",
                     ),
 
-                    rx.divider(margin_y="1em"),
-
-                    rx.input(
-                        rx.input.slot(rx.icon("tag")),
-                        placeholder="Novo Setor",
-                    ),
-
                     type="scroll",
                     style={"max_height": "30vh"},
                 ),
 
-                width="30%",
+                rx.divider(margin_y="1em"),
+
+                rx.hstack(
+                    rx.input(
+                        rx.input.slot(rx.icon("tag")),
+                        placeholder="Novo Grupo",
+                        value=ConfigState.novo_grupo_input,
+                        on_change=lambda v: ConfigState.set_novo_attr("novo_grupo_input", v),
+                        flex="1",
+                    ),
+
+                    rx.select.root(
+                        rx.select.trigger(placeholder="Cor destaque"),
+                        rx.select.content(
+                            rx.foreach(
+                                    radix_colors, 
+                                    lambda cor: 
+                                    rx.select.item(rx.badge(cor.capitalize(), color_scheme=cor), value=cor)
+                                ),
+                        ),
+                        default_value=ConfigState.novo_grupo_cor_input,
+                        on_change=lambda v: ConfigState.set_novo_attr("novo_grupo_cor_input", v)
+                    ),
+
+                    rx.icon_button(rx.icon("plus"), on_click=ConfigState.adicionar_grupo, color_scheme="green"),
+
+                    spacing="1",
+                ),
+
+                rx.alert_dialog.cancel(
+                    rx.button("Sair", variant="soft", color_scheme="gray", width="100%", margin_top="1em")
+                ),
+
+                width="25%",
             ),
         )
 
@@ -444,6 +521,7 @@ def configurações_ativos() -> rx.Component:
                                 align_items="center",
                             ),
 
+                            border_top=f"4px solid var(--{ativo['cor_grupo']}-9)",
                             width="100%",
                         )
                     ),
@@ -730,4 +808,5 @@ app.add_page(index, title="Painel - Echo", on_load=[
     MonitoramentoState.loop_relatorio,
     UserManagementState.carregar_usuarios,
     ConfigState.carregar_emails,
+    ConfigState.carregar_grupos,
 ])

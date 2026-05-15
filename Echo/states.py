@@ -4,14 +4,11 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from sqlmodel import Field
 import os
-import json
 import asyncio
 import reflex as rx
 import icmplib
-import pydantic
 import smtplib
 import bcrypt
-import time
 import uuid
 
 # Criação do arquivo config.env se não existir
@@ -35,6 +32,8 @@ class AtivoRede(rx.Model):
     nome: str
     ip: str
     local: str
+    grupo: str = "GERAL"
+    cor_grupo: str = "gray"
     latencia: float = 0.0
     latencia_total: float = 0.0
     qnt_pings: int = 0
@@ -46,15 +45,17 @@ class AtivoDB(rx.Model, table=True):
     nome: str
     ip: str = Field(index=True, unique=True)
     local: str
+    grupo: str = "GERAL"
     status: str = "Aguardando..."
 
 class EmailDB(rx.Model, table=True):
     """Tabela para armazenar os e-mails de destino no banco de dados SQLite."""
     endereco: str = Field(index=True, unique=True)
 
-class SetorDB(rx.Model, table=True):
-    """Tabela para armazenar setores no banco de dados SQLite."""
+class GrupoDB(rx.Model, table=True):
+    """Tabela para armazenar grupos no banco de dados SQLite."""
     nome: str = Field(index=True, unique=True)
+    cor: str = "gray" # Cor padrão, pode ser personalizada
 
 def disparar_email(ativos, destinatarios):
     # Travas de segurança: não tenta enviar se faltar dados
@@ -151,11 +152,13 @@ class AppState(rx.State):
     ativos: list[AtivoRede] = [] 
     ativos_buffer: list[dict[str, str]] = []
 
-    # Variáveis de setores
-    setores: list[str] = []
-    novo_setor_input: str = ""
-    filtro_setor_atual: str = "Todos"
-    
+    # Variáveis de grupos
+    grupos: list[dict[str, str]] = []
+    novo_grupo_input: str = ""
+    novo_grupo_cor_input: str = "gray"
+    filtro_grupo_atual: str = "Todos"
+    cor_grupo_atual: str = "gray"
+
     # Variáveis de e-mails
     emails: list[str] = []
     novo_email_input: str = ""
@@ -169,6 +172,7 @@ class AppState(rx.State):
     novo_ativo_nome: str = ""
     novo_ativo_ip: str = ""
     novo_ativo_local: str = ""
+    novo_ativo_grupo: str = "Geral"
 
     # Variaveis de autenticação e sessão
     usuario_logado: str = rx.LocalStorage("", name="echo_session_user")
@@ -211,6 +215,11 @@ class AppState(rx.State):
     def set_novo_attr(self, atributo: str, valor: str):
         """Setter universal disponível para todas as classes filhas."""
         setattr(self, atributo, valor)
+
+    @rx.var
+    def nome_dos_grupos(self) -> list[str]:
+        """Gera uma lista com o nome dos grupos para os filtros e dropdowns."""
+        return [g["nome"] for g in self.grupos]
 
 # 2. ESTADO DE AUTENTICAÇÃO
 class AuthState(AppState):
@@ -410,46 +419,58 @@ class ConfigState(AppState):
                 session.commit()
                 self.carregar_emails()
 
-    # --- SETORES ---
+    # --- GRUPOS ---
     @rx.event
-    def carregar_setores(self):
+    def carregar_grupos(self):
         with rx.session() as session:
-            registros = session.exec(SetorDB.select()).all()
-            self.setores = [s.nome for s in registros]
+            grupo_padrao = session.exec(GrupoDB.select().where(GrupoDB.nome == "GERAL")).first()
+            
+            # Se não existir (ex: primeira vez rodando o app), ele cria na hora!
+            if not grupo_padrao:
+                novo_padrao = GrupoDB(nome="GERAL", cor="gray")
+                session.add(novo_padrao)
+                session.commit()
+
+            registros = session.exec(GrupoDB.select()).all()
+            self.grupos = [{"nome": s.nome, "cor": s.cor} for s in registros]
 
     @rx.event
-    def adicionar_setor(self):
-        setor_limpo = self.novo_setor_input.strip().upper() # Padroniza tudo em maiúsculo (ex: TI, GALPÃO)
+    def adicionar_grupo(self):
+        grupo_limpo = self.novo_grupo_input.strip().upper() # Padroniza tudo em maiúsculo (ex: TI, GALPÃO)
+        cor_limpa = self.novo_grupo_cor_input.strip()
         
-        if not setor_limpo: return
+        if not grupo_limpo: 
+            return rx.toast.warning("O nome do grupo é obrigatório.", position="top-right")
         
         with rx.session() as session:
-            registro = session.exec(SetorDB.select().where(SetorDB.nome == setor_limpo)).first()
+            registro = session.exec(GrupoDB.select().where(GrupoDB.nome == grupo_limpo)).first()
 
             if not registro:
-                novo = SetorDB(nome=setor_limpo)
+                novo = GrupoDB(nome=grupo_limpo, cor=cor_limpa)
                 session.add(novo)
                 session.commit()
 
-                self.novo_setor_input = ""
-                self.carregar_setores()
+                self.novo_grupo_input = ""
+                self.novo_grupo_cor_input = "gray"
+                self.carregar_grupos()
 
-                return rx.toast.success("Setor adicionado!", position="top-right")
-            return rx.toast.warning("Setor já existe.", position="top-right")
+                return rx.toast.success(f"Grupo '{grupo_limpo}' adicionado!", position="top-right")
+            return rx.toast.warning("Grupo já existe.", position="top-right")
 
     @rx.event
-    def remover_setor(self, setor_alvo: str):
-        if setor_alvo == "Nenhum":
-            return rx.toast.error("O setor padrão não pode ser apagado.", position="top-right")
+    def remover_grupo(self, grupo_alvo: str):
+        if grupo_alvo == "Nenhum":
+            return rx.toast.error("O grupo padrão não pode ser apagado.", position="top-right")
             
         with rx.session() as session:
-            registro = session.exec(SetorDB.select().where(SetorDB.nome == setor_alvo)).first()
+            registro = session.exec(GrupoDB.select().where(GrupoDB.nome == grupo_alvo)).first()
 
             if registro:
                 session.delete(registro)
                 session.commit()
 
-                self.carregar_setores()
+                self.carregar_grupos()
+                return rx.toast.success(f"Grupo '{grupo_alvo}' removido!", position="top-right")
 
 # 4. ESTADO DE MONITORAMENTO
 class MonitoramentoState(AppState):
@@ -459,14 +480,32 @@ class MonitoramentoState(AppState):
     def carregar_ativos(self):
         """Puxa os ativos da tabela do SQLite e prepara para os gráficos."""
         with rx.session() as session:
+            grupos_db = session.exec(GrupoDB.select()).all()
+            mapa_cores = {g.nome: g.cor for g in grupos_db}
+
             registros = session.exec(AtivoDB.select()).all()
             self.ativos = [
                 AtivoRede(
-                    nome=a.nome, ip=a.ip, local=a.local, status=a.status, 
+                    nome=a.nome, 
+                    ip=a.ip, 
+                    local=a.local, 
+                    grupo=a.grupo, 
+                    cor_grupo=mapa_cores.get(a.grupo, "gray"),
+                    status=a.status, 
                     latencia=0.0, latencia_total=0.0, qnt_pings=0, historico=[]
                 ) for a in registros
             ]
-            self.ativos_buffer = [{"nome": a.nome, "ip": a.ip, "local": a.local} for a in registros]
+            self.ativos_buffer = [
+                {
+                    "nome": a.nome, 
+                    "ip": a.ip, 
+                    "local": a.local, 
+                    "grupo": a.grupo, 
+                    "cor_grupo": mapa_cores.get(a.grupo, "gray")
+                } for a in registros     
+            ]
+
+            print(f"{self.ativos} ativos carregados do banco de dados para monitoramento.")
 
     def on_load(self):
         """Inicializa o buffer com os ativos existentes"""
@@ -494,16 +533,35 @@ class MonitoramentoState(AppState):
         print("Estados reiniciados com sucesso!")
 
     @rx.event
-    def adicionar_ativo_buffer(self):
-        if self.novo_ativo_nome and self.novo_ativo_ip and self.novo_ativo_local:
+    async def adicionar_ativo_buffer(self):
+        ip_limpo = self.novo_ativo_ip.strip()
+        grupo_limpo = self.novo_ativo_grupo.strip() or "GERAL"
+        
+        # Trava para IPs repetidos no buffer
+        for ativo in self.ativos_buffer:
+            if ativo["ip"] == ip_limpo:
+                return rx.toast.warning("Este IP já está na lista!", position="top-right")
+
+        if self.novo_ativo_nome and ip_limpo and self.novo_ativo_local and grupo_limpo:
+            estado_config = await self.get_state(ConfigState)
+            
+            cor_encontrada = "gray"
+            for g in estado_config.grupos:
+                if g["nome"] == grupo_limpo:
+                    cor_encontrada = g["cor"]
+                    break
+
             self.ativos_buffer.append({
                 "nome": self.novo_ativo_nome.strip(),
-                "ip": self.novo_ativo_ip.strip(),
-                "local": self.novo_ativo_local.strip()
+                "ip": ip_limpo,
+                "local": self.novo_ativo_local.strip(),
+                "grupo": grupo_limpo,
+                "cor_grupo": cor_encontrada
             })
             self.novo_ativo_nome = ""
             self.novo_ativo_ip = ""
             self.novo_ativo_local = ""
+            self.novo_ativo_grupo = "GERAL"
             
     @rx.event
     def remover_ativo_buffer(self, ip_alvo: str):
@@ -526,6 +584,7 @@ class MonitoramentoState(AppState):
                     nome=item['nome'], 
                     ip=item['ip'], 
                     local=item['local'], 
+                    grupo=item['grupo'],
                     status="Aguardando..."
                 )
                 session.add(novo_ativo)
@@ -542,7 +601,7 @@ class MonitoramentoState(AppState):
         
         # Reseta e corrige a adição dos atributos obrigatórios do Pydantic
         ativos_resetados = [AtivoRede(
-            nome=a.nome, ip=a.ip, local=a.local, status="Aguardando...", 
+            nome=a.nome, ip=a.ip, local=a.local, grupo=a.grupo, status="Aguardando...", 
             latencia=0.0, latencia_total=0.0, qnt_pings=0, historico=[]
         ) for a in self.ativos]
         self.ativos = ativos_resetados
