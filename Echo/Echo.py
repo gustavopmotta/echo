@@ -1,5 +1,5 @@
 import reflex as rx
-from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, User
+from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede
 
 radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'brown', 'orange', 'sky', 'mint', 'lime', 'yellow', 'amber', 'gold', 'bronze', 'gray']
 
@@ -33,9 +33,9 @@ def renderizar_card(ativo: AtivoRede):
             rx.hstack(
                 rx.vstack(
                     rx.hstack(
-                        rx.heading(ativo.nome, size="4"),
-                        rx.badge(ativo.grupo, color_scheme=ativo.cor_grupo, variant="soft"),
-                        align_items="center",
+                        rx.heading(ativo.nome, size="3"),
+                        rx.badge(ativo.grupo, color_scheme=ativo.cor_grupo, variant="surface"),
+                        spacing="1",
                     ),
                     
                     rx.flex(
@@ -48,13 +48,15 @@ def renderizar_card(ativo: AtivoRede):
                 ),
                 rx.spacer(),
                 rx.vstack(
-                    rx.badge(ativo.status, color_scheme=cor_borda),
+                    rx.badge(rx.icon(rx.cond(ativo.status == "Online", "signal", rx.cond(ativo.status == "Lento", "signal_low", "x")) ,size=16), ativo.status, color_scheme=cor_borda),
+                    
                     rx.cond(
                         ativo.status != "Offline",
                         rx.text(f"{ativo.latencia:.0f} ms", font_weight="bold", size="4"),
                     ),
                     align_items="end",
                 ),
+                align_items="top",
                 width="100%"
             ),
             rx.divider(margin_y="0.5em"),
@@ -364,17 +366,14 @@ def configurações_ativos() -> rx.Component:
                             value=MonitoramentoState.novo_ativo_nome,
                             flex="1",
                         ),
-                        rx.select.root(
-                            rx.select.trigger(placeholder="Grupo do Ativo"),
-                            rx.select.content(
-                                rx.foreach(
-                                    ConfigState.grupos, 
-                                    lambda g: rx.select.item(rx.badge(g["nome"], color_scheme=g["cor"]), value=g["nome"])
-                                ),
-                            ),
-                            default_value=MonitoramentoState.novo_ativo_grupo,
+
+                        rx.select(
+                            AppState.nomes_dos_grupos, # Variável da lista de grupos
+                            value=MonitoramentoState.novo_ativo_grupo,
                             on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_grupo", v),
+                            placeholder="Grupo",
                         ),
+                        
                         width="100%",
                     ),
                     rx.hstack(
@@ -493,6 +492,70 @@ def configurações_ativos() -> rx.Component:
             ),
         )
 
+    def modal_edicao_ativo() -> rx.Component:
+        return rx.alert_dialog.root(
+            rx.alert_dialog.content(
+                rx.alert_dialog.title("Editar Ativo de Rede"),
+                rx.alert_dialog.description("Atualize os detalhes do dispositivo."),
+
+                rx.divider(margin_y="1em"),
+
+                rx.vstack(
+                    rx.hstack(
+                        rx.input(
+                            rx.input.slot(rx.icon("tag")),
+                            value=MonitoramentoState.edit_nome,
+                            placeholder="Nome do Ativo",
+                            on_change=lambda v: MonitoramentoState.set_novo_attr("edit_nome", v),
+                            flex="1",
+                        ),
+
+                        rx.select(
+                            AppState.nomes_dos_grupos,
+                            value=MonitoramentoState.edit_grupo,
+                            placeholder="Grupo",
+                            on_change=lambda v: MonitoramentoState.set_novo_attr("edit_grupo", v)                  
+                        ),
+                        width="100%",
+                    ),
+                    rx.hstack(
+                        rx.input(
+                            rx.input.slot(rx.icon("network")),
+                            value=MonitoramentoState.edit_ip,
+                            placeholder="Endereço IP",
+                            on_change=lambda v: MonitoramentoState.set_novo_attr("edit_ip", v),
+                            width="100%"
+                        ),
+                        rx.input(
+                            rx.input.slot(rx.icon("map-pin")),
+                            value=MonitoramentoState.edit_local,
+                            placeholder="Localização",
+                            on_change=lambda v: MonitoramentoState.set_novo_attr("edit_local", v),
+                            width="100%"
+                        ),
+                        width="100%",
+                    ),
+
+                    rx.flex(
+                        rx.alert_dialog.cancel(
+                            rx.button("Cancelar", on_click=MonitoramentoState.cancelar_edicao_ativo,    color_scheme="gray", variant="soft")
+                        ),
+                        rx.alert_dialog.action(
+                            rx.button("Atualizar", on_click=MonitoramentoState.salvar_edicao_ativo,     color_scheme="blue")
+                        ),
+                        spacing="3",
+                        justify="end",
+                        width="100%"
+                    ),
+
+                    spacing="3",
+                ),
+
+                width="30%",       
+            ),
+            open=MonitoramentoState.ip_edicao != "", 
+        )
+
     return rx.tabs.content(
         rx.dialog.title("Gerenciar Ativos de Rede", padding_top="1em"),
         rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado durante a edição."),
@@ -508,14 +571,24 @@ def configurações_ativos() -> rx.Component:
                         lambda ativo: rx.card(
                             rx.hstack(
                                 rx.vstack(
-                                    rx.text(ativo["nome"], font_weight="bold"),
+                                    rx.hstack(
+                                        rx.text(ativo["nome"], font_weight="bold"),
+                                        rx.badge(ativo["grupo"], color_scheme=ativo["cor_grupo"], variant="surface"),
+
+                                        align_items="center",
+                                        spacing="1"
+                                    ),
                                     rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
                                     spacing="0",
                                     align_items="start",
                                     width="100%"
                                 ),
 
-                                rx.icon_button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer   (ativo ["ip"]), color_scheme="red", variant="ghost"),
+                                rx.hstack(
+                                    rx.tooltip(rx.icon_button(rx.icon("pencil"), on_click=MonitoramentoState.iniciar_edicao_ativo(ativo["ip"]), color_scheme="blue", variant="soft"), content="Editar Ativo"),
+
+                                    rx.tooltip(rx.icon_button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="soft"), content="Remover Ativo"),
+                                ),             
 
                                 width="100%",
                                 align_items="center",
@@ -552,6 +625,8 @@ def configurações_ativos() -> rx.Component:
         ),
         # Botões de Ação do Modal
         rx.button("Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos, color_scheme="blue",justify_self="end", width="100%"),
+
+        modal_edicao_ativo(),
 
         value="ativos",
     ),
@@ -651,7 +726,7 @@ def configurações_usuarios() -> rx.Component:
                                     (UserManagementState.usuario_logado == u["username"]) | (UserManagementState.role_logado == "admin"),
                                     rx.hstack(
                                         # Botão da chave abre o formulário
-                                        rx.tooltip(rx.icon_button(rx.icon("key"), on_click=UserManagementState.iniciar_edicao_senha(u["username"]), color_scheme="blue", variant="soft"), content="Alterar Senha"),
+                                        rx.tooltip(rx.icon_button(rx.icon("key_round"), on_click=UserManagementState.iniciar_edicao_senha(u["username"]), color_scheme="blue", variant="soft"), content="Alterar Senha"),
                                         rx.tooltip(rx.icon_button(rx.icon("trash"), on_click=UserManagementState.deletar_usuario(u["username"]), color_scheme="red", variant="soft"), content="Deletar Usuário"),
                                     ),
                                 ),
@@ -785,7 +860,7 @@ def index() -> rx.Component:
             # Cards de ativos
             rx.grid(
                 rx.foreach(MonitoramentoState.ativos, renderizar_card),
-                columns="4",
+                columns="3",
                 spacing="4",
                 width="100%"
             ),

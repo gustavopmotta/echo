@@ -172,7 +172,14 @@ class AppState(rx.State):
     novo_ativo_nome: str = ""
     novo_ativo_ip: str = ""
     novo_ativo_local: str = ""
-    novo_ativo_grupo: str = "Geral"
+    novo_ativo_grupo: str = ""
+
+    # Variáveis de edição de ativo
+    ip_edicao = ""
+    edit_nome = ""
+    edit_ip = ""
+    edit_local = ""
+    edit_grupo = "GERAL"
 
     # Variaveis de autenticação e sessão
     usuario_logado: str = rx.LocalStorage("", name="echo_session_user")
@@ -217,7 +224,7 @@ class AppState(rx.State):
         setattr(self, atributo, valor)
 
     @rx.var
-    def nome_dos_grupos(self) -> list[str]:
+    def nomes_dos_grupos(self) -> list[str]:
         """Gera uma lista com o nome dos grupos para os filtros e dropdowns."""
         return [g["nome"] for g in self.grupos]
 
@@ -505,8 +512,6 @@ class MonitoramentoState(AppState):
                 } for a in registros     
             ]
 
-            print(f"{self.ativos} ativos carregados do banco de dados para monitoramento.")
-
     def on_load(self):
         """Inicializa o buffer com os ativos existentes"""
         self.carregar_ativos()
@@ -561,7 +566,7 @@ class MonitoramentoState(AppState):
             self.novo_ativo_nome = ""
             self.novo_ativo_ip = ""
             self.novo_ativo_local = ""
-            self.novo_ativo_grupo = "GERAL"
+            self.novo_ativo_grupo = ""
             
     @rx.event
     def remover_ativo_buffer(self, ip_alvo: str):
@@ -601,10 +606,65 @@ class MonitoramentoState(AppState):
         
         # Reseta e corrige a adição dos atributos obrigatórios do Pydantic
         ativos_resetados = [AtivoRede(
-            nome=a.nome, ip=a.ip, local=a.local, grupo=a.grupo, status="Aguardando...", 
+            nome=a.nome, ip=a.ip, local=a.local, grupo=a.grupo, cor_grupo=a.cor_grupo, status="Aguardando...", 
             latencia=0.0, latencia_total=0.0, qnt_pings=0, historico=[]
         ) for a in self.ativos]
         self.ativos = ativos_resetados
+
+    @rx.event
+    def iniciar_edicao_ativo(self, ip_alvo: str):
+        """Puxa os dados do ativo selecionado para dentro do formulário."""
+        for ativo in self.ativos_buffer:
+            if ativo["ip"] == ip_alvo:
+                self.ip_edicao = ip_alvo
+                self.edit_nome = ativo["nome"]
+                self.edit_ip = ativo["ip"]
+                self.edit_local = ativo["local"]
+                self.edit_grupo = ativo["grupo"]
+                break
+
+    @rx.event
+    def cancelar_edicao_ativo(self):
+        """Fecha o modal e limpa as variáveis."""
+        self.ip_edicao = ""
+        self.edit_nome = ""
+        self.edit_ip = ""
+        self.edit_local = ""
+        self.edit_grupo = "GERAL"
+
+    @rx.event
+    async def salvar_edicao_ativo(self):
+        """Aplica as mudanças no buffer (com verificação de IP duplo e cor)."""
+        ip_antigo = self.ip_edicao
+        novo_ip = self.edit_ip.strip()
+        novo_grupo = self.edit_grupo.strip() or "GERAL"
+
+        # Trava: Verifica se o usuário trocou o IP para um que já existe
+        if novo_ip != ip_antigo:
+            for ativo in self.ativos_buffer:
+                if ativo["ip"] == novo_ip:
+                    return rx.toast.warning("Este IP já pertence a outro ativo!", position="top-right")
+
+        # Busca a cor atualizada do grupo selecionado
+        estado_config = await self.get_state(ConfigState)
+        cor_encontrada = "gray"
+        for g in estado_config.grupos:
+            if g["nome"] == novo_grupo:
+                cor_encontrada = g["cor"]
+                break
+
+        # Atualiza a linha exata no buffer
+        for ativo in self.ativos_buffer:
+            if ativo["ip"] == ip_antigo:
+                ativo["nome"] = self.edit_nome.strip()
+                ativo["ip"] = novo_ip
+                ativo["local"] = self.edit_local.strip()
+                ativo["grupo"] = novo_grupo
+                ativo["cor_grupo"] = cor_encontrada
+                break
+
+        self.cancelar_edicao_ativo() # Fecha o modal
+        return rx.toast.info("Alteração feita. Clique em 'Salvar' para aplicar no Banco!", position="top-right")
 
     @rx.event(background=True)
     async def loop_monitoramento(self):
