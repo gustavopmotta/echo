@@ -1,5 +1,5 @@
 import reflex as rx
-from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede
+from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, MonitoramentoGlobal
 
 radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'brown', 'orange', 'sky', 'mint', 'lime', 'yellow', 'amber', 'gold', 'bronze', 'gray']
 
@@ -179,7 +179,7 @@ def configurações_gerais() -> rx.Component:
                     rx.vstack(
                         rx.text("Servidor SMTP:", size="2"),
                         rx.input(
-                            value=AppState.config_buffer["smtp_server"],
+                            value=ConfigState.config_buffer["smtp_server"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_server", v),
                             placeholder="mail.dominio.com.br",
                             width="100%"
@@ -190,7 +190,7 @@ def configurações_gerais() -> rx.Component:
                     rx.vstack(
                         rx.text("Porta SMTP:", size="2"),
                         rx.input(
-                            value=AppState.config_buffer["smtp_port"],
+                            value=ConfigState.config_buffer["smtp_port"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_port", v),
                             placeholder="465",
                             width="100%"
@@ -206,7 +206,7 @@ def configurações_gerais() -> rx.Component:
                     rx.vstack(
                         rx.text("Login:", size="2"),
                         rx.input(
-                            value=AppState.config_buffer["smtp_login"],
+                            value=ConfigState.config_buffer["smtp_login"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_login", v),
                             placeholder="alertas@dominio.com.br",
                             width="100%"
@@ -217,7 +217,7 @@ def configurações_gerais() -> rx.Component:
                     rx.vstack(
                         rx.text("Senha:", size="2"),
                         rx.input(
-                            value=AppState.config_buffer["smtp_password"],
+                            value=ConfigState.config_buffer["smtp_password"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_password", v),
                             type="password",
                             placeholder="********",
@@ -238,7 +238,7 @@ def configurações_gerais() -> rx.Component:
                     rx.vstack(
                         rx.text("Intervalo de Ping (segundos):", size="2"),
                         rx.input(
-                            value=AppState.config_buffer["intervalo_segundos"],
+                            value=ConfigState.config_buffer["intervalo_segundos"],
                             on_change=lambda v: ConfigState.atualizar_buffer("intervalo_segundos", v),
                             placeholder="10",
                             width="100%"
@@ -249,7 +249,7 @@ def configurações_gerais() -> rx.Component:
                     rx.vstack(
                         rx.text("Latência Crítica (ms):", size="2"),
                         rx.input(
-                            value=AppState.config_buffer["limite_latencia_ms"],
+                            value=ConfigState.config_buffer["limite_latencia_ms"],
                             on_change=lambda v: ConfigState.atualizar_buffer("limite_latencia_ms", v),
                             placeholder="100",
                             width="100%"
@@ -262,7 +262,7 @@ def configurações_gerais() -> rx.Component:
                     rx.vstack(
                         rx.text("Máximo Pings no Gráfico:", size="2"),
                         rx.input(
-                            value=AppState.config_buffer["pings_maximos"],
+                            value=ConfigState.config_buffer["pings_maximos"],
                             on_change=lambda v: ConfigState.atualizar_buffer("pings_maximos", v),
                             placeholder="12",
                             width="100%"
@@ -273,7 +273,7 @@ def configurações_gerais() -> rx.Component:
                     rx.vstack(
                         rx.text("Frequência de E-mail (minutos):", size="2"),
                         rx.input(
-                            value=AppState.config_buffer["frequencia_emails"],
+                            value=ConfigState.config_buffer["frequencia_emails"],
                             on_change=lambda v: ConfigState.atualizar_buffer("frequencia_emails", v),
                             placeholder="60",
                             width="100%"
@@ -368,7 +368,7 @@ def configurações_ativos() -> rx.Component:
                         ),
 
                         rx.select(
-                            AppState.nomes_dos_grupos, # Variável da lista de grupos
+                            ConfigState.nomes_dos_grupos, # Variável da lista de grupos
                             value=MonitoramentoState.novo_ativo_grupo,
                             on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_grupo", v),
                             placeholder="Grupo",
@@ -511,7 +511,7 @@ def configurações_ativos() -> rx.Component:
                         ),
 
                         rx.select(
-                            AppState.nomes_dos_grupos,
+                            ConfigState.nomes_dos_grupos,
                             value=MonitoramentoState.edit_grupo,
                             placeholder="Grupo",
                             on_change=lambda v: MonitoramentoState.set_novo_attr("edit_grupo", v)                  
@@ -800,18 +800,18 @@ def index() -> rx.Component:
             # Botões de controle
             rx.hstack(
                 rx.cond(
-                    ~MonitoramentoState.monitorando,
+                    ~MonitoramentoGlobal.monitorando,
                     rx.button(
                         rx.icon("play"),
                         "Iniciar Monitoramento", 
-                        on_click=MonitoramentoState.loop_monitoramento, 
+                        on_click=MonitoramentoState.dar_ignicao_global, 
                         color_scheme="green",
                         variant="solid"
                     ),
                     rx.button(
                         rx.icon("pause"),
                         "Parar Monitoramento", 
-                        on_click=MonitoramentoState.parar_monitoramento, 
+                        on_click=MonitoramentoGlobal.parar_monitoramento_global, 
                         color_scheme="red",
                         variant="solid"
                     ),
@@ -819,7 +819,7 @@ def index() -> rx.Component:
                 
                 # Configurações gerais
                 rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("settings"), "Configurações", color_scheme="blue", variant="surface", disabled=MonitoramentoState.monitorando)),
+                    rx.dialog.trigger(rx.button(rx.icon("settings"), "Configurações", color_scheme="blue", variant="surface", disabled=MonitoramentoGlobal.monitorando)),
 
                     rx.dialog.content(
                         rx.tabs.root(
@@ -859,7 +859,7 @@ def index() -> rx.Component:
             
             # Cards de ativos
             rx.grid(
-                rx.foreach(MonitoramentoState.ativos, renderizar_card),
+                rx.foreach(MonitoramentoGlobal.ativos, renderizar_card),
                 columns="3",
                 spacing="4",
                 width="100%"
@@ -880,8 +880,8 @@ app.add_page(tela_login, route="/login", title="Login - Echo", on_load=AuthState
 app.add_page(index, title="Painel - Echo", on_load=[
     AuthState.verificar_acesso,
     MonitoramentoState.on_load,
-    MonitoramentoState.loop_relatorio,
     UserManagementState.carregar_usuarios,
     ConfigState.carregar_emails,
     ConfigState.carregar_grupos,
+    MonitoramentoGlobal.conectar_painel
 ])

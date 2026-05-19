@@ -147,44 +147,18 @@ def carregar_emails():
 # 1. ESTADO BASE
 class AppState(rx.State):
     """Estado principal do qual todos os outros herdam."""
-
-    # Variáveis de monitoramento e ativos
-    ativos: list[AtivoRede] = [] 
-    ativos_buffer: list[dict[str, str]] = []
-
-    # Variáveis de grupos
-    grupos: list[dict[str, str]] = []
-    novo_grupo_input: str = ""
-    novo_grupo_cor_input: str = "gray"
-    filtro_grupo_atual: str = "Todos"
-    cor_grupo_atual: str = "gray"
-
-    # Variáveis de e-mails
-    emails: list[str] = []
-    novo_email_input: str = ""
-
-    # Variaveis de controle de loops assíncronos
-    monitorando: bool = False
-    loop_relatorio_ativo: bool = False
-    ciclo_atual: int = 0
-
-    # Variáveis do formulário de novo ativo
-    novo_ativo_nome: str = ""
-    novo_ativo_ip: str = ""
-    novo_ativo_local: str = ""
-    novo_ativo_grupo: str = ""
-
-    # Variáveis de edição de ativo
-    ip_edicao = ""
-    edit_nome = ""
-    edit_ip = ""
-    edit_local = ""
-    edit_grupo = "GERAL"
-
     # Variaveis de autenticação e sessão
     usuario_logado: str = rx.LocalStorage("", name="echo_session_user")
     role_logado: str = rx.LocalStorage("operador", name="echo_user_role")
     token_logado: str = rx.LocalStorage("", name="echo_session_token")
+    
+    @rx.event
+    def set_novo_attr(self, atributo: str, valor: str):
+        """Setter universal disponível para todas as classes filhas."""
+        setattr(self, atributo, valor)
+
+# 2. ESTADO DE AUTENTICAÇÃO
+class AuthState(AppState):
     usuario_input: str = ""
     senha_input: str = ""
 
@@ -193,43 +167,6 @@ class AppState(rx.State):
     setup_password: str = ""
     setup_confirmacao: str = ""
 
-    lista_usuarios: list[dict[str, str | int]] = []
-    
-    # Variáveis do formulário de novo usuário
-    form_username: str = ""
-    form_password: str = ""
-    form_is_admin: bool = False
-
-    # Variáveis de edição de senha
-    usuario_edicao: str = ""
-    nova_senha_input: str = ""
-    nova_senha_confirmacao: str = ""
-
-    # --- Dicionários de Configuração ---
-    config: dict[str, str | int]  = {
-        "smtp_server": os.environ.get("SMTP_SERVER", ""), 
-        "smtp_port": int(os.environ.get("SMTP_PORT", 465)),
-        "smtp_login": os.environ.get("SMTP_LOGIN", ""), 
-        "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
-        "intervalo_segundos": int(os.environ.get("INTERVALO_SEGUNDOS", 10)),
-        "limite_latencia_ms": int(os.environ.get("LIMITE_LATENCIA_MS", 100)),
-        "pings_maximos": int(os.environ.get("PINGS_MAXIMOS", 12)),
-        "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60))
-    }
-    config_buffer: dict[str, str | int] = config.copy()
-    
-    @rx.event
-    def set_novo_attr(self, atributo: str, valor: str):
-        """Setter universal disponível para todas as classes filhas."""
-        setattr(self, atributo, valor)
-
-    @rx.var
-    def nomes_dos_grupos(self) -> list[str]:
-        """Gera uma lista com o nome dos grupos para os filtros e dropdowns."""
-        return [g["nome"] for g in self.grupos]
-
-# 2. ESTADO DE AUTENTICAÇÃO
-class AuthState(AppState):
     @rx.event
     def tentar_login(self):
         with rx.session() as session:
@@ -362,6 +299,35 @@ class AuthState(AppState):
 class ConfigState(AppState):
     """Gerencia exclusivamente as variáveis de ambiente e e-mails."""
 
+    # Variáveis de e-mails
+    emails: list[str] = []
+    novo_email_input: str = ""
+
+    # Variáveis de grupos
+    grupos: list[dict[str, str]] = []
+    novo_grupo_input: str = ""
+    novo_grupo_cor_input: str = "gray"
+    filtro_grupo_atual: str = "Todos"
+    cor_grupo_atual: str = "gray"
+
+    # --- Dicionários de Configuração ---
+    config: dict[str, str | int]  = {
+        "smtp_server": os.environ.get("SMTP_SERVER", ""), 
+        "smtp_port": int(os.environ.get("SMTP_PORT", 465)),
+        "smtp_login": os.environ.get("SMTP_LOGIN", ""), 
+        "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
+        "intervalo_segundos": int(os.environ.get("INTERVALO_SEGUNDOS", 10)),
+        "limite_latencia_ms": int(os.environ.get("LIMITE_LATENCIA_MS", 100)),
+        "pings_maximos": int(os.environ.get("PINGS_MAXIMOS", 12)),
+        "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60))
+    }
+    config_buffer: dict[str, str | int] = config.copy()
+
+    @rx.var
+    def nomes_dos_grupos(self) -> list[str]:
+        """Gera uma lista com o nome dos grupos para os filtros e dropdowns."""
+        return [g["nome"] for g in self.grupos]
+
     # --- CONFIGURAÇÕES GERAIS ---
     @rx.event
     def atualizar_buffer(self, chave: str, valor: str):
@@ -483,6 +449,21 @@ class ConfigState(AppState):
 class MonitoramentoState(AppState):
     """Gerencia exclusivamente os pings, ativos e relatórios."""
 
+    ativos_buffer: list[dict[str, str]] = []
+
+    # Variáveis do formulário de novo ativo
+    novo_ativo_nome: str = ""
+    novo_ativo_ip: str = ""
+    novo_ativo_local: str = ""
+    novo_ativo_grupo: str = ""
+
+    # Variáveis de edição de ativo
+    ip_edicao = ""
+    edit_nome = ""
+    edit_ip = ""
+    edit_local = ""
+    edit_grupo = "GERAL"
+
     @rx.event
     def carregar_ativos(self):
         """Puxa os ativos da tabela do SQLite e prepara para os gráficos."""
@@ -600,18 +581,6 @@ class MonitoramentoState(AppState):
         yield rx.toast.success("Ativos salvos no Banco de Dados!", position="top-right")
 
     @rx.event
-    def parar_monitoramento(self):
-        self.monitorando = False
-        self.ciclo_atual += 1
-        
-        # Reseta e corrige a adição dos atributos obrigatórios do Pydantic
-        ativos_resetados = [AtivoRede(
-            nome=a.nome, ip=a.ip, local=a.local, grupo=a.grupo, cor_grupo=a.cor_grupo, status="Aguardando...", 
-            latencia=0.0, latencia_total=0.0, qnt_pings=0, historico=[]
-        ) for a in self.ativos]
-        self.ativos = ativos_resetados
-
-    @rx.event
     def iniciar_edicao_ativo(self, ip_alvo: str):
         """Puxa os dados do ativo selecionado para dentro do formulário."""
         for ativo in self.ativos_buffer:
@@ -666,99 +635,44 @@ class MonitoramentoState(AppState):
         self.cancelar_edicao_ativo() # Fecha o modal
         return rx.toast.info("Alteração feita. Clique em 'Salvar' para aplicar no Banco!", position="top-right")
 
-    @rx.event(background=True)
-    async def loop_monitoramento(self):
-        async with self:
-            if self.monitorando: return
-            self.monitorando = True
-            self.ciclo_atual += 1
-            meu_ciclo = self.ciclo_atual 
+    @rx.event
+    async def dar_ignicao_global(self):
+        """Pega os dados do usuário, configurações e joga para o Servidor Global."""
         
-        while True:
-            async with self:
-                if not self.monitorando or self.ciclo_atual != meu_ciclo: break
-                ativos_atuais = self.ativos.copy()
-                
-                # COMUNICAÇÃO ENTRE ESTADOS: Busca as configs do ConfigState
-                estado_config = await self.get_state(ConfigState)
-                limite_ms = estado_config.config["limite_latencia_ms"]
-                max_pings = estado_config.config["pings_maximos"]
-                intervalo = estado_config.config["intervalo_segundos"]
-            
-            ativos_atualizados = []
-            hora_atual = datetime.now().strftime("%H:%M:%S")
-            
-            # Pings acontecem fora do 'async with self' para não travar a interface
-            for ativo in ativos_atuais:
-                resultado = await icmplib.async_ping(ativo.ip, count=1, timeout=2)
-                latencia_ms = resultado.avg_rtt
-                
-                if not resultado.is_alive:
-                    novo_status, nova_latencia = "Offline", 0.0
-                elif latencia_ms > limite_ms:
-                    novo_status, nova_latencia = "Lento", latencia_ms
-                else:
-                    novo_status, nova_latencia = "Online", latencia_ms
-                
-                novo_historico = ativo.historico.copy()
-                novo_historico.append({"hora": hora_atual, "latencia": nova_latencia})
-                
-                if len(novo_historico) > max_pings:
-                    novo_historico = novo_historico[-max_pings:]
-                
-                novo_ativo = ativo.model_copy(update={
-                    "status": novo_status, "latencia": nova_latencia,
-                    "latencia_total": ativo.latencia_total + nova_latencia,
-                    "qnt_pings": ativo.qnt_pings + 1, "historico": novo_historico
-                })
-                ativos_atualizados.append(novo_ativo)
-            
-            async with self:
-                if not self.monitorando or self.ciclo_atual != meu_ciclo: break
-                self.ativos = ativos_atualizados
-            
-            await asyncio.sleep(intervalo)
+        # 1. Acessa a Sala Global e as Configurações
+        sala = await self.get_state(MonitoramentoGlobal)
+        estado_config = await self.get_state(ConfigState)
+        
+        if sala.monitorando:
+            return rx.toast.info("O servidor já está monitorando!", position="top-right")
 
-    @rx.event(background=True)
-    async def loop_relatorio(self):
-        async with self:
-            if getattr(self, "loop_relatorio_ativo", False): return
-            self.loop_relatorio_ativo = True
-
-        while True:
-            async with self:
-                estado_config = await self.get_state(ConfigState)
-                tempo_espera = estado_config.config["frequencia_emails"]
-                
-            await asyncio.sleep(tempo_espera*60)
-            
-            async with self:
-                if not self.monitorando or not self.ativos: continue
-                
-                ativos_para_relatorio = []
-                ativos_zerados = []
-
-                for ativo in self.ativos:
-                    media_da_hora = ativo.latencia_total / ativo.qnt_pings if ativo.qnt_pings > 0 else 0.0
-                    
-                    ativo_relatorio = ativo.model_copy(update={"latencia": media_da_hora})
-                    ativos_para_relatorio.append(ativo_relatorio)
-
-                    ativo_limpo = ativo.model_copy(update={"latencia_total": 0.0, "qnt_pings": 0})
-                    ativos_zerados.append(ativo_limpo)
-
-                self.ativos = ativos_zerados
-                
-                estado_config = await self.get_state(ConfigState)
-                destinatarios = estado_config.emails.copy()
-
-            if destinatarios:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Enviando relatório horário automático...")
-                disparar_email(ativos_para_relatorio, destinatarios) # Função externa
+        # 2. Carrega as configurações cruciais
+        limite_ms = estado_config.config["limite_latencia_ms"]
+        max_pings = estado_config.config["pings_maximos"]
+        intervalo = estado_config.config["intervalo_segundos"]
+        
+        # 3. Transfere os ativos preparados para a Sala Global e liga o motor!
+        sala.monitorando = True
+        sala.ativos_em_tempo_real = self.ativos # A lista que veio do Banco de Dados
+        sala.ciclo += 1
+        
+        return MonitoramentoGlobal.loop_motor_central(limite_ms, max_pings, intervalo)
 
 # 5. ESTADO DE GERENCIAMENTO DE USUÁRIOS
 class UserManagementState(AppState):
     """Gerencia a criação e exclusão de usuários do banco de dados."""
+
+    lista_usuarios: list[dict[str, str | int]] = []
+    
+    # Variáveis do formulário de novo usuário
+    form_username: str = ""
+    form_password: str = ""
+    form_is_admin: bool = False
+
+    # Variáveis de edição de senha
+    usuario_edicao: str = ""
+    nova_senha_input: str = ""
+    nova_senha_confirmacao: str = ""
 
     @rx.event
     def carregar_usuarios(self):
@@ -859,3 +773,77 @@ class UserManagementState(AppState):
                 self.nova_senha_input = ""
                 self.nova_senha_confirmacao = ""
                 return rx.toast.error("Usuário não encontrado.", position="top-right")
+            
+class MonitoramentoGlobal(rx.SharedState):
+    monitorando: bool = False
+    ativos: list[AtivoRede] = []
+    ciclo: int = 0
+    filtro_grupo_atual: str = "Todos"
+    
+    @rx.var
+    def ativos_por_grupo(self) -> dict[str, list[AtivoRede]]:
+        agrupados = {}
+        lista_filtrada = self.ativos if self.filtro_grupo_atual == "Todos" else [a for a in self.ativos if a.grupo == self.filtro_grupo_atual]
+        for ativo in lista_filtrada:
+            if ativo.grupo not in agrupados:
+                agrupados[ativo.grupo] = []
+            agrupados[ativo.grupo].append(ativo)
+        return agrupados
+
+    @rx.event
+    async def conectar_painel(self):
+        """Liga a TV na frequência do painel central."""
+        await self._link_to("echo-painel-central")
+
+    @rx.event
+    def parar_monitoramento_global(self):
+        """O botão Stop (visto por todos)."""
+        self.monitorando = False
+        self.ciclo += 1
+        
+        # Reseta o status visual para quem estiver assistindo
+        self.ativos_em_tempo_real = [
+            a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": []}) 
+            for a in self.ativos_em_tempo_real
+        ]
+
+    @rx.event(background=True)
+    async def loop_motor_central(self, limite_ms: int, max_pings: int, intervalo: int):
+        """Roda silenciosamente e avisa TODOS os navegadores ao mesmo tempo."""
+        meu_ciclo = self.ciclo
+        
+        while True:
+            async with self:
+                if not self.monitorando or self.ciclo != meu_ciclo: 
+                    break
+                ativos_atuais = self.ativos_em_tempo_real.copy()
+                
+            ativos_atualizados = []
+            hora_atual = datetime.now().strftime("%H:%M:%S")
+
+            # Pings acontecem soltos para não travar a memória
+            for ativo in ativos_atuais:
+                resultado = await icmplib.async_ping(ativo.ip, count=1, timeout=2)
+                latencia_ms = resultado.avg_rtt
+                
+                novo_status = "Offline" if not resultado.is_alive else "Lento" if latencia_ms > limite_ms else "Online"
+                nova_latencia = latencia_ms if resultado.is_alive else 0.0
+                
+                novo_historico = ativo.historico.copy()
+                novo_historico.append({"hora": hora_atual, "latencia": nova_latencia})
+                if len(novo_historico) > max_pings:
+                    novo_historico = novo_historico[-max_pings:]
+                
+                ativos_atualizados.append(ativo.model_copy(update={
+                    "status": novo_status, "latencia": nova_latencia,
+                    "latencia_total": ativo.latencia_total + nova_latencia,
+                    "qnt_pings": ativo.qnt_pings + 1, "historico": novo_historico
+                }))
+            
+            # Bloqueia a sala rapidamente, atualiza a lista e o Reflex avisa todos os PCs!
+            async with self:
+                if not self.monitorando or self.ciclo != meu_ciclo: 
+                    break
+                self.ativos_em_tempo_real = ativos_atualizados
+                
+            await asyncio.sleep(intervalo)
