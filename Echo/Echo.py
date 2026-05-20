@@ -80,7 +80,7 @@ def tela_login() -> rx.Component:
                     rx.input(
                         rx.input.slot(rx.icon("user")),
                         placeholder="usuário@echo.com", 
-                        on_change=lambda v: AuthState.set_novo_attr("usuario_input", v),
+                        on_change=AuthState.set_usuario_input,
                         value=AuthState.usuario_input,
                         width="100%",
                         size="3"
@@ -96,7 +96,7 @@ def tela_login() -> rx.Component:
                         rx.input.slot(rx.icon("lock")),
                         type="password", 
                         placeholder="**********",
-                        on_change=lambda v: AuthState.set_novo_attr("senha_input", v),
+                        on_change=AuthState.set_senha_input,
                         value=AuthState.senha_input,
                         width="100%",
                         size="3"
@@ -129,7 +129,7 @@ def tela_setup_inicial() -> rx.Component:
                 rx.input(
                     rx.input.slot(rx.icon("user_star")),
                     placeholder="Nome do Administrador", 
-                    on_change=lambda v: AuthState.set_novo_attr("setup_username", v),
+                    on_change=AuthState.set_setup_username,
                     value=AuthState.setup_username,
                     width="100%"
                 ),
@@ -137,7 +137,7 @@ def tela_setup_inicial() -> rx.Component:
                     rx.input.slot(rx.icon("lock")),
                     type="password",
                     placeholder="Senha",
-                    on_change=lambda v: AuthState.set_novo_attr("setup_password", v),
+                    on_change=AuthState.set_setup_password,
                     value=AuthState.setup_password,
                     width="100%"
                 ),
@@ -145,7 +145,7 @@ def tela_setup_inicial() -> rx.Component:
                     rx.input.slot(rx.icon("lock")),
                     type="password", 
                     placeholder="Confirme a Senha",
-                    on_change=lambda v: AuthState.set_novo_attr("setup_confirmacao", v),
+                    on_change=AuthState.set_setup_confirmacao,
                     value=AuthState.setup_confirmacao,
                     width="100%"
                 ),
@@ -330,7 +330,7 @@ def configurações_emails() -> rx.Component:
                 rx.hstack(
                     rx.input(
                         placeholder="novo@dominio.com", 
-                        on_change=lambda v: ConfigState.set_novo_attr("novo_email_input", v), 
+                        on_change=ConfigState.set_novo_email_input, 
                         value=ConfigState.novo_email_input,
                         width="100%"
                     ),
@@ -362,7 +362,7 @@ def configurações_ativos() -> rx.Component:
                         rx.input(
                             rx.input.slot(rx.icon("tag")),
                             placeholder="Nome do Ativo", 
-                            on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_nome", v), 
+                            on_change=MonitoramentoState.set_novo_ativo_nome,
                             value=MonitoramentoState.novo_ativo_nome,
                             flex="1",
                         ),
@@ -370,7 +370,7 @@ def configurações_ativos() -> rx.Component:
                         rx.select(
                             ConfigState.nomes_dos_grupos, # Variável da lista de grupos
                             value=MonitoramentoState.novo_ativo_grupo,
-                            on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_grupo", v),
+                            on_change=MonitoramentoState.set_novo_ativo_grupo,
                             placeholder="Grupo",
                         ),
                         
@@ -380,14 +380,14 @@ def configurações_ativos() -> rx.Component:
                         rx.input(
                             rx.input.slot(rx.icon("network")),
                             placeholder="Endereço IP", 
-                            on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_ip", v), 
+                            on_change=MonitoramentoState.set_novo_ativo_ip, 
                             value=MonitoramentoState.novo_ativo_ip,
                             width="100%"
                         ),
                         rx.input(
                             rx.input.slot(rx.icon("map_pin")),
                             placeholder="Localização", 
-                            on_change=lambda v: MonitoramentoState.set_novo_attr("novo_ativo_local", v), 
+                            on_change=MonitoramentoState.set_novo_ativo_local, 
                             value=MonitoramentoState.novo_ativo_local,
                             width="100%"
                         ),
@@ -460,9 +460,10 @@ def configurações_ativos() -> rx.Component:
                 rx.hstack(
                     rx.input(
                         rx.input.slot(rx.icon("tag")),
+                        type="text",
                         placeholder="Novo Grupo",
                         value=ConfigState.novo_grupo_input,
-                        on_change=lambda v: ConfigState.set_novo_attr("novo_grupo_input", v),
+                        on_change=ConfigState.set_novo_grupo_input,
                         flex="1",
                     ),
 
@@ -476,7 +477,7 @@ def configurações_ativos() -> rx.Component:
                                 ),
                         ),
                         default_value=ConfigState.novo_grupo_cor_input,
-                        on_change=lambda v: ConfigState.set_novo_attr("novo_grupo_cor_input", v)
+                        on_change=ConfigState.set_novo_grupo_cor_input
                     ),
 
                     rx.icon_button(rx.icon("plus"), on_click=ConfigState.adicionar_grupo, color_scheme="green"),
@@ -503,18 +504,19 @@ def configurações_ativos() -> rx.Component:
                 rx.vstack(
                     rx.hstack(
                         rx.input(
-                            rx.input.slot(rx.icon("tag")),
-                            value=MonitoramentoState.edit_nome,
-                            placeholder="Nome do Ativo",
-                            on_change=lambda v: MonitoramentoState.set_novo_attr("edit_nome", v),
-                            flex="1",
-                        ),
+                                rx.input.slot(rx.icon("tag")),
+                                type="text",
+                                value=MonitoramentoState.edit_nome,
+                                placeholder="Nome do Ativo",
+                                on_change=MonitoramentoState.set_edit_nome,
+                                flex="1",
+                            ),
 
                         rx.select(
                             ConfigState.nomes_dos_grupos,
                             value=MonitoramentoState.edit_grupo,
                             placeholder="Grupo",
-                            on_change=lambda v: MonitoramentoState.set_novo_attr("edit_grupo", v)                  
+                            on_change=MonitoramentoState.set_edit_grupo                  
                         ),
                         width="100%",
                     ),
@@ -523,14 +525,14 @@ def configurações_ativos() -> rx.Component:
                             rx.input.slot(rx.icon("network")),
                             value=MonitoramentoState.edit_ip,
                             placeholder="Endereço IP",
-                            on_change=lambda v: MonitoramentoState.set_novo_attr("edit_ip", v),
+                            on_change=MonitoramentoState.set_edit_ip,
                             width="100%"
                         ),
                         rx.input(
                             rx.input.slot(rx.icon("map-pin")),
                             value=MonitoramentoState.edit_local,
                             placeholder="Localização",
-                            on_change=lambda v: MonitoramentoState.set_novo_attr("edit_local", v),
+                            on_change=MonitoramentoState.set_edit_local,
                             width="100%"
                         ),
                         width="100%",
@@ -649,7 +651,7 @@ def configurações_usuarios() -> rx.Component:
                         placeholder="Nova senha",
                         type="password",
                         value=UserManagementState.nova_senha_input,
-                        on_change=lambda v: UserManagementState.set_novo_attr("nova_senha_input", v),
+                        on_change=UserManagementState.set_nova_senha_input,
                         width="100%"
                     ),
                     rx.input(
@@ -657,7 +659,7 @@ def configurações_usuarios() -> rx.Component:
                         placeholder="Confirme a senha",
                         type="password",
                         value=UserManagementState.nova_senha_confirmacao,
-                        on_change=lambda v: UserManagementState.set_novo_attr("nova_senha_confirmacao", v),
+                        on_change=UserManagementState.set_nova_senha_confirmacao,
                         width="100%"
                     ),
                     spacing="3",
@@ -751,7 +753,7 @@ def configurações_usuarios() -> rx.Component:
                         rx.input.slot(rx.icon("mail", color="gray")),
                         placeholder="Email", 
                         value=UserManagementState.form_username, 
-                        on_change=lambda v: UserManagementState.set_novo_attr("form_username", v),
+                        on_change=UserManagementState.set_form_username,
                         width="100%"
                     ),
                     rx.input(
@@ -759,14 +761,14 @@ def configurações_usuarios() -> rx.Component:
                         placeholder="Senha", 
                         type="password", 
                         value=UserManagementState.form_password, 
-                        on_change=lambda v: UserManagementState.set_novo_attr("form_password", v),
+                        on_change=UserManagementState.set_form_password,
                         width="100%"
                     ),
                     rx.cond(UserManagementState.role_logado == "admin",
                         rx.checkbox(
                             "Administrador", 
                             checked=UserManagementState.form_is_admin, 
-                            on_change=lambda v: UserManagementState.set_novo_attr("form_is_admin", v)
+                            on_change=UserManagementState.set_form_is_admin
                         ),
                     ),
                     rx.button(
@@ -859,7 +861,7 @@ def index() -> rx.Component:
             
             # Cards de ativos
             rx.grid(
-                rx.foreach(MonitoramentoGlobal.ativos, renderizar_card),
+                rx.foreach(MonitoramentoGlobal.ativos_live, renderizar_card),
                 columns="3",
                 spacing="4",
                 width="100%"

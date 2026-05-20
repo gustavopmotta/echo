@@ -151,11 +151,6 @@ class AppState(rx.State):
     usuario_logado: str = rx.LocalStorage("", name="echo_session_user")
     role_logado: str = rx.LocalStorage("operador", name="echo_user_role")
     token_logado: str = rx.LocalStorage("", name="echo_session_token")
-    
-    @rx.event
-    def set_novo_attr(self, atributo: str, valor: str):
-        """Setter universal disponível para todas as classes filhas."""
-        setattr(self, atributo, valor)
 
 # 2. ESTADO DE AUTENTICAÇÃO
 class AuthState(AppState):
@@ -448,7 +443,7 @@ class ConfigState(AppState):
 # 4. ESTADO DE MONITORAMENTO
 class MonitoramentoState(AppState):
     """Gerencia exclusivamente os pings, ativos e relatórios."""
-
+    ativos: list[AtivoRede] = []
     ativos_buffer: list[dict[str, str]] = []
 
     # Variáveis do formulário de novo ativo
@@ -493,9 +488,17 @@ class MonitoramentoState(AppState):
                 } for a in registros     
             ]
 
-    def on_load(self):
-        """Inicializa o buffer com os ativos existentes"""
-        self.carregar_ativos()
+    @rx.event
+    async def on_load(self):
+        """Inicializa o buffer com os ativos existentes e joga na tela."""
+        self.carregar_ativos() # Lê o banco de dados e salva no self.ativos (Privado)
+        
+        # Conecta na Sala Global para verificar o status
+        sala = await self.get_state(MonitoramentoGlobal)
+        
+        # Se o motor central estiver DESLIGADO, joga a lista inativa na TV para os usuários verem!
+        if not sala.monitorando:
+            sala.ativos_live = self.ativos
 
     @rx.event
     def reiniciar_sistema_local(self):
@@ -554,7 +557,7 @@ class MonitoramentoState(AppState):
         self.ativos_buffer = [a for a in self.ativos_buffer if a["ip"] != ip_alvo]
         
     @rx.event
-    def salvar_ativos(self):
+    async def salvar_ativos(self):
         """Salva a lista do buffer diretamente no Banco de Dados (sem JSON)"""
         with rx.session() as session:
             # 1. Apaga a tabela antiga
@@ -577,8 +580,39 @@ class MonitoramentoState(AppState):
                 
             session.commit()
             
-        self.carregar_ativos() # Atualiza a memória baseada no banco
-        yield rx.toast.success("Ativos salvos no Banco de Dados!", position="top-right")
+        # 1. Recarrega do banco para o estado privado (HD)
+        self.carregar_ativos() 
+        
+        # 2. Conecta na TV Global (RAM)
+        sala = await self.get_state(MonitoramentoGlobal)
+        
+        # 3. Mesclagem Inteligente (Atualiza a tela na hora!)
+        if not sala.monitorando:
+            # Se o sistema estiver pausado, é só jogar a lista nova na tela
+            sala.ativos_live = self.ativos
+        else:
+            # Se estiver rodando, mantemos o status dos antigos e adicionamos os novos!
+            ativos_rodando = {a.ip: a for a in sala.ativos_live}
+            nova_lista_global = []
+            
+            for ativo_base in self.ativos:
+                if ativo_base.ip in ativos_rodando:
+                    # Se já existia, mantém ele (com a barrinha de ping, histórico, etc)
+                    # Mas atualizamos nome, local e grupo caso você tenha editado!
+                    ativo_mantido = ativos_rodando[ativo_base.ip]
+                    ativo_mantido.nome = ativo_base.nome
+                    ativo_mantido.local = ativo_base.local
+                    ativo_mantido.grupo = ativo_base.grupo
+                    ativo_mantido.cor_grupo = ativo_base.cor_grupo
+                    nova_lista_global.append(ativo_mantido)
+                else:
+                    # Se é um IP novo, entra como "Aguardando..."
+                    nova_lista_global.append(ativo_base)
+            
+            # O Reflex atualiza a tela de todos os computadores instantaneamente aqui!
+            sala.ativos_live = nova_lista_global
+            
+        return rx.toast.success("Ativos atualizados e sincronizados!", position="top-right")
 
     @rx.event
     def iniciar_edicao_ativo(self, ip_alvo: str):
@@ -637,23 +671,23 @@ class MonitoramentoState(AppState):
 
     @rx.event
     async def dar_ignicao_global(self):
-        """Pega os dados do usuário, configurações e joga para o Servidor Global."""
-        
-        # 1. Acessa a Sala Global e as Configurações
         sala = await self.get_state(MonitoramentoGlobal)
         estado_config = await self.get_state(ConfigState)
         
         if sala.monitorando:
             return rx.toast.info("O servidor já está monitorando!", position="top-right")
 
-        # 2. Carrega as configurações cruciais
+        self.carregar_ativos() 
+
         limite_ms = estado_config.config["limite_latencia_ms"]
         max_pings = estado_config.config["pings_maximos"]
         intervalo = estado_config.config["intervalo_segundos"]
+        freq_emails = estado_config.config["frequencia_emails"] 
         
-        # 3. Transfere os ativos preparados para a Sala Global e liga o motor!
         sala.monitorando = True
-        sala.ativos_em_tempo_real = self.ativos # A lista que veio do Banco de Dados
+        
+        # Agora ele passa a lista fresca com todos os novos ativos
+        sala.ativos_live = self.ativos 
         sala.ciclo += 1
         
         return MonitoramentoGlobal.loop_motor_central(limite_ms, max_pings, intervalo)
@@ -776,14 +810,14 @@ class UserManagementState(AppState):
             
 class MonitoramentoGlobal(rx.SharedState):
     monitorando: bool = False
-    ativos: list[AtivoRede] = []
+    ativos_live: list[AtivoRede] = []
     ciclo: int = 0
     filtro_grupo_atual: str = "Todos"
     
     @rx.var
     def ativos_por_grupo(self) -> dict[str, list[AtivoRede]]:
         agrupados = {}
-        lista_filtrada = self.ativos if self.filtro_grupo_atual == "Todos" else [a for a in self.ativos if a.grupo == self.filtro_grupo_atual]
+        lista_filtrada = self.ativos_live if self.filtro_grupo_atual == "Todos" else [a for a in self.ativos_live if a.grupo == self.filtro_grupo_atual]
         for ativo in lista_filtrada:
             if ativo.grupo not in agrupados:
                 agrupados[ativo.grupo] = []
@@ -802,9 +836,9 @@ class MonitoramentoGlobal(rx.SharedState):
         self.ciclo += 1
         
         # Reseta o status visual para quem estiver assistindo
-        self.ativos_em_tempo_real = [
+        self.ativos_live = [
             a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": []}) 
-            for a in self.ativos_em_tempo_real
+            for a in self.ativos_live
         ]
 
     @rx.event(background=True)
@@ -816,7 +850,7 @@ class MonitoramentoGlobal(rx.SharedState):
             async with self:
                 if not self.monitorando or self.ciclo != meu_ciclo: 
                     break
-                ativos_atuais = self.ativos_em_tempo_real.copy()
+                ativos_atuais = self.ativos_live.copy()
                 
             ativos_atualizados = []
             hora_atual = datetime.now().strftime("%H:%M:%S")
@@ -844,6 +878,6 @@ class MonitoramentoGlobal(rx.SharedState):
             async with self:
                 if not self.monitorando or self.ciclo != meu_ciclo: 
                     break
-                self.ativos_em_tempo_real = ativos_atualizados
+                self.ativos_live = ativos_atualizados
                 
             await asyncio.sleep(intervalo)
