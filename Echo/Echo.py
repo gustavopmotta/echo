@@ -1,5 +1,5 @@
 import reflex as rx
-from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, MonitoramentoGlobal
+from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, AppState
 
 radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'brown', 'orange', 'sky', 'mint', 'lime', 'yellow', 'amber', 'gold', 'bronze', 'gray']
 
@@ -182,7 +182,8 @@ def configurações_gerais() -> rx.Component:
                             value=ConfigState.config_buffer["smtp_server"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_server", v),
                             placeholder="mail.dominio.com.br",
-                            width="100%"
+                            width="100%",
+                            auto_complete=False
                         ),
                         spacing="1",
                         flex="1",
@@ -193,7 +194,8 @@ def configurações_gerais() -> rx.Component:
                             value=ConfigState.config_buffer["smtp_port"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_port", v),
                             placeholder="465",
-                            width="100%"
+                            width="100%",
+                            auto_complete=False
                         ),
                         spacing="1",
                         flex="1"
@@ -209,7 +211,8 @@ def configurações_gerais() -> rx.Component:
                             value=ConfigState.config_buffer["smtp_login"],
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_login", v),
                             placeholder="alertas@dominio.com.br",
-                            width="100%"
+                            width="100%",
+                            auto_complete=False
                         ),
                         spacing="1",
                         flex="1"
@@ -221,7 +224,8 @@ def configurações_gerais() -> rx.Component:
                             on_change=lambda v: ConfigState.atualizar_buffer("smtp_password", v),
                             type="password",
                             placeholder="********",
-                            width="100%"
+                            width="100%",
+                            auto_complete=False
                         ),
                         spacing="1",
                         flex="1"
@@ -294,7 +298,7 @@ def configurações_gerais() -> rx.Component:
     
         rx.button(
             "Salvar Alterações", 
-            on_click=ConfigState.salvar_configuracoes, 
+            on_click=ConfigState.salvar_configs_env, 
             color_scheme="purple", 
             width="100%"
         ),
@@ -569,7 +573,7 @@ def configurações_ativos() -> rx.Component:
             rx.scroll_area(
                 rx.vstack(
                     rx.foreach(
-                        MonitoramentoState.ativos_buffer, 
+                        AppState.ativos_buffer, 
                         lambda ativo: rx.card(
                             rx.hstack(
                                 rx.vstack(
@@ -715,7 +719,7 @@ def configurações_usuarios() -> rx.Component:
                                             color_scheme=rx.cond(u["role"] == "admin", "amber", "blue"),
                                             radius="small",
                                         ),
-                                        rx.cond(UserManagementState.usuario_logado == u["username"],
+                                        rx.cond(AuthState.usuario_logado == u["username"],
                                             rx.badge("Usuário Atual", color_scheme="green", radius="small")
                                         ),
                                         spacing="1"
@@ -725,7 +729,7 @@ def configurações_usuarios() -> rx.Component:
                                 ),
                                 rx.spacer(),
                                 rx.cond(
-                                    (UserManagementState.usuario_logado == u["username"]) | (UserManagementState.role_logado == "admin"),
+                                    (AuthState.usuario_logado == u["username"]) | (AuthState.role_logado == "admin"),
                                     rx.hstack(
                                         # Botão da chave abre o formulário
                                         rx.tooltip(rx.icon_button(rx.icon("key_round"), on_click=UserManagementState.iniciar_edicao_senha(u["username"]), color_scheme="blue", variant="soft"), content="Alterar Senha"),
@@ -764,7 +768,7 @@ def configurações_usuarios() -> rx.Component:
                         on_change=UserManagementState.set_form_password,
                         width="100%"
                     ),
-                    rx.cond(UserManagementState.role_logado == "admin",
+                    rx.cond(AuthState.role_logado == "admin",
                         rx.checkbox(
                             "Administrador", 
                             checked=UserManagementState.form_is_admin, 
@@ -802,7 +806,7 @@ def index() -> rx.Component:
             # Botões de controle
             rx.hstack(
                 rx.cond(
-                    ~MonitoramentoGlobal.monitorando,
+                    ~AppState.monitorando,
                     rx.button(
                         rx.icon("play"),
                         "Iniciar Monitoramento", 
@@ -813,7 +817,7 @@ def index() -> rx.Component:
                     rx.button(
                         rx.icon("pause"),
                         "Parar Monitoramento", 
-                        on_click=MonitoramentoGlobal.parar_monitoramento_global, 
+                        on_click=AppState.parar_monitoramento_global, 
                         color_scheme="red",
                         variant="solid"
                     ),
@@ -821,7 +825,7 @@ def index() -> rx.Component:
                 
                 # Configurações gerais
                 rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("settings"), "Configurações", color_scheme="blue", variant="surface", disabled=MonitoramentoGlobal.monitorando)),
+                    rx.dialog.trigger(rx.button(rx.icon("settings"), "Configurações", color_scheme="blue", variant="surface", disabled=AppState.monitorando)),
 
                     rx.dialog.content(
                         rx.tabs.root(
@@ -861,7 +865,7 @@ def index() -> rx.Component:
             
             # Cards de ativos
             rx.grid(
-                rx.foreach(MonitoramentoGlobal.ativos_live, renderizar_card),
+                rx.foreach(AppState.ativos_live, renderizar_card),
                 columns="3",
                 spacing="4",
                 width="100%"
@@ -885,5 +889,6 @@ app.add_page(index, title="Painel - Echo", on_load=[
     UserManagementState.carregar_usuarios,
     ConfigState.carregar_emails,
     ConfigState.carregar_grupos,
-    MonitoramentoGlobal.conectar_painel
+    ConfigState.carregar_configs,
+    AppState.conectar_painel
 ])

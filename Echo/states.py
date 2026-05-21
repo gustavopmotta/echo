@@ -1,7 +1,7 @@
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from sqlmodel import Field
 import os
 import asyncio
@@ -17,8 +17,7 @@ if not os.path.exists("Echo/config.env"):
     with open("Echo/config.env", "w", encoding="utf-8") as f:
         f.write("# Configurações de email\nSMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=suasenha\n# Configurações de monitoramento\nINTERVALO_SEGUNDOS=10\nLIMITE_LATENCIA_MS=100\nPINGS_MAXIMOS=12\nFREQUENCIA_EMAILS=60")
 
-# Carregando arquivo de acesso do email
-load_dotenv("Echo/config.env")
+load_dotenv("Echo/config.env", override=True)
 
 class User(rx.Model, table=True):
     """Tabela para armazenar os usuários no banco de dados SQLite."""
@@ -57,7 +56,7 @@ class GrupoDB(rx.Model, table=True):
     nome: str = Field(index=True, unique=True)
     cor: str = "gray" # Cor padrão, pode ser personalizada
 
-def disparar_email(ativos, destinatarios):
+def disparar_relatorio(ativos: list[AtivoRede], destinatarios):
     # Travas de segurança: não tenta enviar se faltar dados
     if not destinatarios:
         print("Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
@@ -65,6 +64,8 @@ def disparar_email(ativos, destinatarios):
     if not ativos:
         print("Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
         return
+
+    load_dotenv("Echo/config.env", override=True)
 
     # Puxa as configurações do .env (já carregadas no topo do seu código)
     servidor = os.environ.get("SMTP_SERVER")
@@ -145,15 +146,190 @@ def carregar_emails():
         return [e.endereco for e in registros]
 
 # 1. ESTADO BASE
-class AppState(rx.State):
-    """Estado principal do qual todos os outros herdam."""
-    # Variaveis de autenticação e sessão
+class AppState(rx.SharedState):
+    """Estado global compartilhado entre todas as páginas, ideal para dados que precisam ser acessados em múltiplas telas."""
+
+    monitorando: bool = False
+    ativos_live: list[AtivoRede] = []
+    ciclo: int = 0
+    filtro_grupo_atual: str = "Todos"
+
+    ativos_buffer: list[dict[str, str]] = []
+    buffer_iniciado: bool = False
+
+    alterando_configurações: bool = False
+
+    ram_intervalo: int = 10
+    ram_limite_ms: int = 100
+    ram_max_pings: int = 12
+    ram_freq_emails: int = 60
+
+    @rx.event
+    async def recarregar_configs_da_memoria(self):
+        """O Gatilho: Puxa o .env atualizado e injeta na RAM para os loops usarem."""
+        load_dotenv("Echo/config.env", override=True)
+        self.ram_intervalo = int(os.environ.get("INTERVALO_SEGUNDOS", 10))
+        self.ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
+        self.ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
+        self.ram_freq_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
+    
+    @rx.var
+    def ativos_por_grupo(self) -> dict[str, list[AtivoRede]]:
+        agrupados = {}
+        lista_filtrada = self.ativos_live if self.filtro_grupo_atual == "Todos" else [a for a in self.ativos_live if a.grupo == self.filtro_grupo_atual]
+        for ativo in lista_filtrada:
+            if ativo.grupo not in agrupados:
+                agrupados[ativo.grupo] = []
+            agrupados[ativo.grupo].append(ativo)
+        return agrupados
+
+    @rx.event
+    async def conectar_painel(self):
+        """Sintoniza o navegador na Sala Global e garante que o buffer tenha dados."""
+        # 1. Vincula o navegador ao token central e pega a instância oficial do servidor
+        linked_state = await self._link_to("echo-painel-central")
+        
+        # 2. Se for o primeiro computador a entrar na sala desde que o servidor ligou, 
+        # ele vai até o banco de dados SQLite e puxa o rascunho inicial.
+        if not linked_state.buffer_iniciado:
+            with rx.session() as session:
+                # Carrega o mapa de cores dos grupos
+                grupos_db = session.exec(GrupoDB.select()).all()
+                mapa_cores = {g.nome: g.cor for g in grupos_db}
+                
+                # Carrega os ativos salvos no HD
+                registros = session.exec(AtivoDB.select()).all()
+                
+                # Alimenta a prancheta colaborativa oficial do Servidor
+                linked_state.ativos_buffer = [
+                    {
+                        "nome": a.nome, 
+                        "ip": a.ip, 
+                        "local": a.local, 
+                        "grupo": a.grupo, 
+                        "cor_grupo": mapa_cores.get(a.grupo, "gray")
+                    } 
+                    for a in registros
+                ]
+
+                if not linked_state.monitorando:
+                    linked_state.ativos_live = [
+                        AtivoRede(
+                            nome=a.nome, 
+                            ip=a.ip, 
+                            local=a.local,
+                            grupo=a.grupo, 
+                            cor_grupo=mapa_cores.get(a.grupo, "gray"),
+                            status="Aguardando...", 
+                            latencia=0.0,
+                            latencia_total=0.0, 
+                            qnt_pings=0, 
+                            historico=[]
+                        ) for a in registros
+                    ]
+
+                linked_state.buffer_iniciado = True
+    
+    @rx.event
+    def parar_monitoramento_global(self):
+        """O botão Stop (visto por todos)."""
+        self.monitorando = False
+        self.ciclo += 1
+        
+        # Reseta o status visual para quem estiver assistindo
+        self.ativos_live = [
+            a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": []}) 
+            for a in self.ativos_live
+        ]
+
+        return rx.toast.info("Monitoramento pausado.", position="top-right")
+
+    @rx.event(background=True)
+    async def loop_motor_central(self):
+        """Roda silenciosamente e avisa TODOS os navegadores ao mesmo tempo."""  
+        async with self:
+            await self.recarregar_configs_da_memoria()
+            meu_ciclo = self.ciclo
+
+        rx.toast.info("Monitoramento iniciado.", position="top-right")
+        
+        while True:
+            async with self:
+                if not self.monitorando or self.ciclo != meu_ciclo: 
+                    break
+                ativos_atuais = self.ativos_live.copy()
+                intervalo = self.ram_intervalo
+                limite_ms = self.ram_limite_ms
+                max_pings = self.ram_max_pings
+                
+                ativos_atualizados = []
+                hora_atual = datetime.now().strftime("%H:%M:%S")
+
+            # Pings acontecem soltos para não travar a memória
+            for ativo in ativos_atuais:
+                resultado = await icmplib.async_ping(ativo.ip, count=1, timeout=2)
+                latencia_ms = resultado.avg_rtt
+                
+                novo_status = "Offline" if not resultado.is_alive else "Lento" if latencia_ms > limite_ms else "Online"
+                nova_latencia = latencia_ms if resultado.is_alive else 0.0
+                
+                novo_historico = ativo.historico.copy()
+                novo_historico.append({"hora": hora_atual, "latencia": nova_latencia})
+                if len(novo_historico) > max_pings:
+                    novo_historico = novo_historico[-max_pings:]
+                
+                ativos_atualizados.append(ativo.model_copy(update={
+                    "status": novo_status, "latencia": nova_latencia,
+                    "latencia_total": ativo.latencia_total + nova_latencia,
+                    "qnt_pings": ativo.qnt_pings + 1, "historico": novo_historico
+                }))
+            
+            # Bloqueia a sala rapidamente, atualiza a lista e o Reflex avisa todos os PCs!
+            async with self:
+                if not self.monitorando or self.ciclo != meu_ciclo: 
+                    break
+                self.ativos_live = ativos_atualizados
+                
+            await asyncio.sleep(intervalo) 
+    
+    @rx.event(background=True)
+    async def loop_relatorio(self):
+        """Loop contínuo que dispara os e-mails baseados no tempo configurado."""
+        async with self:
+            meu_ciclo = self.ciclo
+            
+        while True:
+            # 1. Pega a frequência da RAM (e converte para segundos)
+            async with self:
+                if not self.monitorando or self.ciclo != meu_ciclo:
+                    break
+                tempo_espera_segundos = self.ram_freq_emails * 60 
+
+            # 2. O SEGREDO: As Micro-Sonecas!
+            # Dorme 1 segundo por vez para poder checar se o usuário clicou em Pausar
+            for t in range(tempo_espera_segundos):
+                await asyncio.sleep(1)
+                
+                # A cada segundo, dá uma espiada no status da Sala Global
+                async with self:
+                    # Se o sistema foi pausado ou reiniciado, MATA o loop imediatamente
+                    if not self.monitorando or self.ciclo != meu_ciclo:
+                        return 
+
+            # 3. O tempo de espera acabou completo. Hora de tirar a fotografia da rede!
+            async with self:
+                if not self.monitorando or self.ciclo != meu_ciclo:
+                    break
+            
+            # 5. Dispara o e-mail
+            disparar_relatorio(self.ativos_live.copy(), carregar_emails())
+
+# 2. ESTADO DE AUTENTICAÇÃO
+class AuthState(rx.State):
     usuario_logado: str = rx.LocalStorage("", name="echo_session_user")
     role_logado: str = rx.LocalStorage("operador", name="echo_user_role")
     token_logado: str = rx.LocalStorage("", name="echo_session_token")
 
-# 2. ESTADO DE AUTENTICAÇÃO
-class AuthState(AppState):
     usuario_input: str = ""
     senha_input: str = ""
 
@@ -291,7 +467,7 @@ class AuthState(AppState):
         return rx.redirect("/login")
 
 # 3. ESTADO DE CONFIGURAÇÕES
-class ConfigState(AppState):
+class ConfigState(rx.State):
     """Gerencia exclusivamente as variáveis de ambiente e e-mails."""
 
     # Variáveis de e-mails
@@ -325,6 +501,20 @@ class ConfigState(AppState):
 
     # --- CONFIGURAÇÕES GERAIS ---
     @rx.event
+    def carregar_configs(self):
+        self.config: dict[str, str | int]  = {
+            "smtp_server": os.environ.get("SMTP_SERVER", ""), 
+            "smtp_port": int(os.environ.get("SMTP_PORT", 465)),
+            "smtp_login": os.environ.get("SMTP_LOGIN", ""), 
+            "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
+            "intervalo_segundos": int(os.environ.get("INTERVALO_SEGUNDOS", 10)),
+            "limite_latencia_ms": int(os.environ.get("LIMITE_LATENCIA_MS", 100)),
+            "pings_maximos": int(os.environ.get("PINGS_MAXIMOS", 12)),
+            "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60))
+        }
+        self.config_buffer: dict[str, str | int] = self.config.copy()
+
+    @rx.event
     def atualizar_buffer(self, chave: str, valor: str):
         chaves_numericas = ["smtp_port", "intervalo_segundos", "limite_latencia_ms", "pings_maximos", "frequencia_emails"]
         if chave in chaves_numericas:
@@ -333,19 +523,32 @@ class ConfigState(AppState):
             self.config_buffer[chave] = valor
 
     @rx.event
-    def salvar_configuracoes(self):
-        self.config = self.config_buffer.copy()
+    def salvar_configs_env(self):
+        """Salva as alterações do buffer fisicamente no arquivo .env."""
+        caminho_env = "Echo/config.env"
         
-        # Atualiza a memória e salva no disco
-        chaves = ["smtp_server", "smtp_port", "smtp_login", "smtp_password", 
-                  "intervalo_segundos", "limite_latencia_ms", "pings_maximos", "frequencia_emails"]
-                  
-        for chave in chaves:
-            os.environ[chave.upper()] = str(self.config[chave])
+        # Garante que o arquivo exista
+        if not os.path.exists(caminho_env):
+            open(caminho_env, 'w').close()
+            
+        # O set_key pede Strings, então convertemos tudo para str() ao salvar
+        set_key(caminho_env, "SMTP_SERVER", str(self.config_buffer["smtp_server"]))
+        set_key(caminho_env, "SMTP_PORT", str(self.config_buffer["smtp_port"]))
+        set_key(caminho_env, "SMTP_LOGIN", str(self.config_buffer["smtp_login"]))
+        set_key(caminho_env, "SMTP_PASSWORD", str(self.config_buffer["smtp_password"]))
+        set_key(caminho_env, "INTERVALO_SEGUNDOS", str(self.config_buffer["intervalo_segundos"]))
+        set_key(caminho_env, "LIMITE_LATENCIA_MS", str(self.config_buffer["limite_latencia_ms"]))
+        set_key(caminho_env, "PINGS_MAXIMOS", str(self.config_buffer["pings_maximos"]))
+        set_key(caminho_env, "FREQUENCIA_EMAILS", str(self.config_buffer["frequencia_emails"]))
 
-        conteudo_env = "\n".join([f"{k.upper()}={self.config[k]}" for k in chaves]) + "\n"
-        with open("Echo/config.env", "w", encoding="utf-8") as f:
-            f.write(conteudo_env)
+        # Atualiza a tela privada do usuário que acabou de clicar
+        self.config = self.config_buffer.copy()
+
+        # Retorna o aviso de sucesso e o "Gatilho" para atualizar a RAM do Servidor Global
+        return [
+            rx.toast.success("Configurações salvas e aplicadas!", position="top-right"),
+            AppState.recarregar_configs_da_memoria
+        ]
     
     # --- EMAILS ---
     @rx.event
@@ -441,10 +644,9 @@ class ConfigState(AppState):
                 return rx.toast.success(f"Grupo '{grupo_alvo}' removido!", position="top-right")
 
 # 4. ESTADO DE MONITORAMENTO
-class MonitoramentoState(AppState):
+class MonitoramentoState(rx.State):
     """Gerencia exclusivamente os pings, ativos e relatórios."""
     ativos: list[AtivoRede] = []
-    ativos_buffer: list[dict[str, str]] = []
 
     # Variáveis do formulário de novo ativo
     novo_ativo_nome: str = ""
@@ -475,17 +677,11 @@ class MonitoramentoState(AppState):
                     grupo=a.grupo, 
                     cor_grupo=mapa_cores.get(a.grupo, "gray"),
                     status=a.status, 
-                    latencia=0.0, latencia_total=0.0, qnt_pings=0, historico=[]
+                    latencia=0.0, 
+                    latencia_total=0.0, 
+                    qnt_pings=0, 
+                    historico=[]
                 ) for a in registros
-            ]
-            self.ativos_buffer = [
-                {
-                    "nome": a.nome, 
-                    "ip": a.ip, 
-                    "local": a.local, 
-                    "grupo": a.grupo, 
-                    "cor_grupo": mapa_cores.get(a.grupo, "gray")
-                } for a in registros     
             ]
 
     @rx.event
@@ -494,81 +690,67 @@ class MonitoramentoState(AppState):
         self.carregar_ativos() # Lê o banco de dados e salva no self.ativos (Privado)
         
         # Conecta na Sala Global para verificar o status
-        sala = await self.get_state(MonitoramentoGlobal)
+        sala = await self.get_state(AppState)
         
         # Se o motor central estiver DESLIGADO, joga a lista inativa na TV para os usuários verem!
-        if not sala.monitorando:
+        if not sala.monitorando and len(sala.ativos_live) == 0:
             sala.ativos_live = self.ativos
-
-    @rx.event
-    def reiniciar_sistema_local(self):
-        """Reseta o monitoramento e o timer de e-mail sem recarregar a página"""
-        
-        # 1. Mata os loops atuais
-        self.monitorando = False
-        self.loop_relatorio_ativo = False
-        self.ciclo_atual += 1 # Isso faz os 'while' pararem no próximo check
-        
-        # 3. Limpa o visual dos ativos para o estado inicial
-        # Usamos uma compreensão de lista para resetar o status de todos
-        self.ativos = [
-            a.model_copy(update={
-                "status": "Aguardando...",
-                "latencia": 0.0,
-                "historico": []
-            }) for a in self.ativos
-        ]
-        
-        print("Estados reiniciados com sucesso!")
 
     @rx.event
     async def adicionar_ativo_buffer(self):
         ip_limpo = self.novo_ativo_ip.strip()
         grupo_limpo = self.novo_ativo_grupo.strip() or "GERAL"
-        
+
+        sala = await self.get_state(AppState)
+        estado_config = await self.get_state(ConfigState)
+
         # Trava para IPs repetidos no buffer
-        for ativo in self.ativos_buffer:
+        for ativo in sala.ativos_buffer:
             if ativo["ip"] == ip_limpo:
                 return rx.toast.warning("Este IP já está na lista!", position="top-right")
-
+    
         if self.novo_ativo_nome and ip_limpo and self.novo_ativo_local and grupo_limpo:
-            estado_config = await self.get_state(ConfigState)
-            
             cor_encontrada = "gray"
             for g in estado_config.grupos:
                 if g["nome"] == grupo_limpo:
                     cor_encontrada = g["cor"]
                     break
-
-            self.ativos_buffer.append({
+            
+            sala.ativos_buffer.append({
                 "nome": self.novo_ativo_nome.strip(),
                 "ip": ip_limpo,
                 "local": self.novo_ativo_local.strip(),
                 "grupo": grupo_limpo,
                 "cor_grupo": cor_encontrada
             })
+
             self.novo_ativo_nome = ""
             self.novo_ativo_ip = ""
             self.novo_ativo_local = ""
             self.novo_ativo_grupo = ""
             
     @rx.event
-    def remover_ativo_buffer(self, ip_alvo: str):
-        self.ativos_buffer = [a for a in self.ativos_buffer if a["ip"] != ip_alvo]
-        
+    async def remover_ativo_buffer(self, ip_alvo: str):
+        sala = await self.get_state(AppState)
+        sala.ativos_buffer = [a for a in sala.ativos_buffer if a["ip"] != ip_alvo]
+
     @rx.event
     async def salvar_ativos(self):
-        """Salva a lista do buffer diretamente no Banco de Dados (sem JSON)"""
+        """Salva a lista do buffer GLOBAL diretamente no Banco de Dados (sem JSON)"""
+        
+        # 1. Pega a prancheta colaborativa da Sala Global PRIMEIRO
+        sala = await self.get_state(AppState)
+        
         with rx.session() as session:
-            # 1. Apaga a tabela antiga
+            # Apaga a tabela antiga
             todos_antigos = session.exec(AtivoDB.select()).all()
             for antigo in todos_antigos:
                 session.delete(antigo)
             
             session.commit()
 
-            # 2. Insere os ativos que estão no painel de edição
-            for item in self.ativos_buffer:
+            # Insere os ativos usando a lista da SALA GLOBAL (sala.ativos_buffer)
+            for item in sala.ativos_buffer:
                 novo_ativo = AtivoDB(
                     nome=item['nome'], 
                     ip=item['ip'], 
@@ -580,11 +762,8 @@ class MonitoramentoState(AppState):
                 
             session.commit()
             
-        # 1. Recarrega do banco para o estado privado (HD)
+        # 2. Recarrega do banco para o estado privado (HD)
         self.carregar_ativos() 
-        
-        # 2. Conecta na TV Global (RAM)
-        sala = await self.get_state(MonitoramentoGlobal)
         
         # 3. Mesclagem Inteligente (Atualiza a tela na hora!)
         if not sala.monitorando:
@@ -597,8 +776,7 @@ class MonitoramentoState(AppState):
             
             for ativo_base in self.ativos:
                 if ativo_base.ip in ativos_rodando:
-                    # Se já existia, mantém ele (com a barrinha de ping, histórico, etc)
-                    # Mas atualizamos nome, local e grupo caso você tenha editado!
+                    # Atualiza os dados de configuração mas mantém o status de ping
                     ativo_mantido = ativos_rodando[ativo_base.ip]
                     ativo_mantido.nome = ativo_base.nome
                     ativo_mantido.local = ativo_base.local
@@ -606,18 +784,20 @@ class MonitoramentoState(AppState):
                     ativo_mantido.cor_grupo = ativo_base.cor_grupo
                     nova_lista_global.append(ativo_mantido)
                 else:
-                    # Se é um IP novo, entra como "Aguardando..."
+                    # IP novo
                     nova_lista_global.append(ativo_base)
             
-            # O Reflex atualiza a tela de todos os computadores instantaneamente aqui!
+            # O Reflex avisa todos os PCs
             sala.ativos_live = nova_lista_global
             
         return rx.toast.success("Ativos atualizados e sincronizados!", position="top-right")
 
     @rx.event
-    def iniciar_edicao_ativo(self, ip_alvo: str):
+    async def iniciar_edicao_ativo(self, ip_alvo: str):
         """Puxa os dados do ativo selecionado para dentro do formulário."""
-        for ativo in self.ativos_buffer:
+        sala = await self.get_state(AppState)
+
+        for ativo in sala.ativos_buffer:
             if ativo["ip"] == ip_alvo:
                 self.ip_edicao = ip_alvo
                 self.edit_nome = ativo["nome"]
@@ -627,7 +807,7 @@ class MonitoramentoState(AppState):
                 break
 
     @rx.event
-    def cancelar_edicao_ativo(self):
+    async def cancelar_edicao_ativo(self):
         """Fecha o modal e limpa as variáveis."""
         self.ip_edicao = ""
         self.edit_nome = ""
@@ -642,14 +822,16 @@ class MonitoramentoState(AppState):
         novo_ip = self.edit_ip.strip()
         novo_grupo = self.edit_grupo.strip() or "GERAL"
 
+        sala = await self.get_state(AppState)
+        estado_config = await self.get_state(ConfigState)
+
         # Trava: Verifica se o usuário trocou o IP para um que já existe
         if novo_ip != ip_antigo:
-            for ativo in self.ativos_buffer:
+            for ativo in sala.ativos_buffer:
                 if ativo["ip"] == novo_ip:
                     return rx.toast.warning("Este IP já pertence a outro ativo!", position="top-right")
 
         # Busca a cor atualizada do grupo selecionado
-        estado_config = await self.get_state(ConfigState)
         cor_encontrada = "gray"
         for g in estado_config.grupos:
             if g["nome"] == novo_grupo:
@@ -657,7 +839,7 @@ class MonitoramentoState(AppState):
                 break
 
         # Atualiza a linha exata no buffer
-        for ativo in self.ativos_buffer:
+        for ativo in sala.ativos_buffer:
             if ativo["ip"] == ip_antigo:
                 ativo["nome"] = self.edit_nome.strip()
                 ativo["ip"] = novo_ip
@@ -666,23 +848,17 @@ class MonitoramentoState(AppState):
                 ativo["cor_grupo"] = cor_encontrada
                 break
 
-        self.cancelar_edicao_ativo() # Fecha o modal
+        await self.cancelar_edicao_ativo() # Fecha o modal
         return rx.toast.info("Alteração feita. Clique em 'Salvar' para aplicar no Banco!", position="top-right")
 
     @rx.event
     async def dar_ignicao_global(self):
-        sala = await self.get_state(MonitoramentoGlobal)
-        estado_config = await self.get_state(ConfigState)
+        sala = await self.get_state(AppState)
         
         if sala.monitorando:
             return rx.toast.info("O servidor já está monitorando!", position="top-right")
 
         self.carregar_ativos() 
-
-        limite_ms = estado_config.config["limite_latencia_ms"]
-        max_pings = estado_config.config["pings_maximos"]
-        intervalo = estado_config.config["intervalo_segundos"]
-        freq_emails = estado_config.config["frequencia_emails"] 
         
         sala.monitorando = True
         
@@ -690,10 +866,10 @@ class MonitoramentoState(AppState):
         sala.ativos_live = self.ativos 
         sala.ciclo += 1
         
-        return MonitoramentoGlobal.loop_motor_central(limite_ms, max_pings, intervalo)
+        return [AppState.loop_motor_central(), AppState.loop_relatorio()]
 
 # 5. ESTADO DE GERENCIAMENTO DE USUÁRIOS
-class UserManagementState(AppState):
+class UserManagementState(rx.State):
     """Gerencia a criação e exclusão de usuários do banco de dados."""
 
     lista_usuarios: list[dict[str, str | int]] = []
@@ -807,77 +983,3 @@ class UserManagementState(AppState):
                 self.nova_senha_input = ""
                 self.nova_senha_confirmacao = ""
                 return rx.toast.error("Usuário não encontrado.", position="top-right")
-            
-class MonitoramentoGlobal(rx.SharedState):
-    monitorando: bool = False
-    ativos_live: list[AtivoRede] = []
-    ciclo: int = 0
-    filtro_grupo_atual: str = "Todos"
-    
-    @rx.var
-    def ativos_por_grupo(self) -> dict[str, list[AtivoRede]]:
-        agrupados = {}
-        lista_filtrada = self.ativos_live if self.filtro_grupo_atual == "Todos" else [a for a in self.ativos_live if a.grupo == self.filtro_grupo_atual]
-        for ativo in lista_filtrada:
-            if ativo.grupo not in agrupados:
-                agrupados[ativo.grupo] = []
-            agrupados[ativo.grupo].append(ativo)
-        return agrupados
-
-    @rx.event
-    async def conectar_painel(self):
-        """Liga a TV na frequência do painel central."""
-        await self._link_to("echo-painel-central")
-
-    @rx.event
-    def parar_monitoramento_global(self):
-        """O botão Stop (visto por todos)."""
-        self.monitorando = False
-        self.ciclo += 1
-        
-        # Reseta o status visual para quem estiver assistindo
-        self.ativos_live = [
-            a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": []}) 
-            for a in self.ativos_live
-        ]
-
-    @rx.event(background=True)
-    async def loop_motor_central(self, limite_ms: int, max_pings: int, intervalo: int):
-        """Roda silenciosamente e avisa TODOS os navegadores ao mesmo tempo."""
-        meu_ciclo = self.ciclo
-        
-        while True:
-            async with self:
-                if not self.monitorando or self.ciclo != meu_ciclo: 
-                    break
-                ativos_atuais = self.ativos_live.copy()
-                
-            ativos_atualizados = []
-            hora_atual = datetime.now().strftime("%H:%M:%S")
-
-            # Pings acontecem soltos para não travar a memória
-            for ativo in ativos_atuais:
-                resultado = await icmplib.async_ping(ativo.ip, count=1, timeout=2)
-                latencia_ms = resultado.avg_rtt
-                
-                novo_status = "Offline" if not resultado.is_alive else "Lento" if latencia_ms > limite_ms else "Online"
-                nova_latencia = latencia_ms if resultado.is_alive else 0.0
-                
-                novo_historico = ativo.historico.copy()
-                novo_historico.append({"hora": hora_atual, "latencia": nova_latencia})
-                if len(novo_historico) > max_pings:
-                    novo_historico = novo_historico[-max_pings:]
-                
-                ativos_atualizados.append(ativo.model_copy(update={
-                    "status": novo_status, "latencia": nova_latencia,
-                    "latencia_total": ativo.latencia_total + nova_latencia,
-                    "qnt_pings": ativo.qnt_pings + 1, "historico": novo_historico
-                }))
-            
-            # Bloqueia a sala rapidamente, atualiza a lista e o Reflex avisa todos os PCs!
-            async with self:
-                if not self.monitorando or self.ciclo != meu_ciclo: 
-                    break
-                self.ativos_live = ativos_atualizados
-                
-            await asyncio.sleep(intervalo)
