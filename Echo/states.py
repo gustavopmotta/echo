@@ -22,6 +22,7 @@ load_dotenv("Echo/config.env", override=True)
 class User(rx.Model, table=True):
     """Tabela para armazenar os usuários no banco de dados SQLite."""
     username: str = Field(index=True, unique=True)
+    email: str  = Field(index=True, unique=True)
     password: str
     role: str = "operador" # "admin" ou "operador"
     session_token: str = ""
@@ -46,10 +47,6 @@ class AtivoDB(rx.Model, table=True):
     local: str
     grupo: str = "GERAL"
     status: str = "Aguardando..."
-
-class EmailDB(rx.Model, table=True):
-    """Tabela para armazenar os e-mails de destino no banco de dados SQLite."""
-    endereco: str = Field(index=True, unique=True)
 
 class GrupoDB(rx.Model, table=True):
     """Tabela para armazenar grupos no banco de dados SQLite."""
@@ -142,8 +139,13 @@ def carregar_ativos():
 
 def carregar_emails():
     with rx.session() as session:
-        registros = session.exec(EmailDB.select()).all()
-        return [e.endereco for e in registros]
+        # Puxa todos os usuários do banco
+        usuarios = session.exec(User.select()).all()
+        
+        # Filtra apenas os que têm e-mail preenchido para evitar erros
+        lista_emails = [u.email for u in usuarios if u.email]
+        
+        return lista_emails
 
 # 1. ESTADO BASE
 class AppState(rx.SharedState):
@@ -158,6 +160,7 @@ class AppState(rx.SharedState):
     buffer_iniciado: bool = False
 
     alterando_configurações: bool = False
+    proximo_relatorio: int = 0
 
     ram_intervalo: int = 10
     ram_limite_ms: int = 100
@@ -172,16 +175,7 @@ class AppState(rx.SharedState):
         self.ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
         self.ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
         self.ram_freq_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
-    
-    @rx.var
-    def ativos_por_grupo(self) -> dict[str, list[AtivoRede]]:
-        agrupados = {}
-        lista_filtrada = self.ativos_live if self.filtro_grupo_atual == "Todos" else [a for a in self.ativos_live if a.grupo == self.filtro_grupo_atual]
-        for ativo in lista_filtrada:
-            if ativo.grupo not in agrupados:
-                agrupados[ativo.grupo] = []
-            agrupados[ativo.grupo].append(ativo)
-        return agrupados
+        self.alterando_configurações = True
 
     @rx.event
     async def conectar_painel(self):
@@ -313,6 +307,8 @@ class AppState(rx.SharedState):
                 # A cada segundo, dá uma espiada no status da Sala Global
                 async with self:
                     # Se o sistema foi pausado ou reiniciado, MATA o loop imediatamente
+                    self.proximo_relatorio = tempo_espera_segundos - t
+
                     if not self.monitorando or self.ciclo != meu_ciclo:
                         return 
 
@@ -326,15 +322,16 @@ class AppState(rx.SharedState):
 
 # 2. ESTADO DE AUTENTICAÇÃO
 class AuthState(rx.State):
-    usuario_logado: str = rx.LocalStorage("", name="echo_session_user")
-    role_logado: str = rx.LocalStorage("operador", name="echo_user_role")
-    token_logado: str = rx.LocalStorage("", name="echo_session_token")
+    usuario_logado: str = rx.SessionStorage("", name="echo_session_user")
+    role_logado: str = rx.SessionStorage("operador", name="echo_user_role")
+    token_logado: str = rx.SessionStorage("", name="echo_session_token")
 
-    usuario_input: str = ""
+    email_input: str = ""
     senha_input: str = ""
 
     # Variáveis de setup inicial
     setup_username: str = "admin" # Sugestão padrão
+    setup_email: str = ""
     setup_password: str = ""
     setup_confirmacao: str = ""
 
@@ -343,7 +340,7 @@ class AuthState(rx.State):
         with rx.session() as session:
             # Procura o utilizador na base de dados
             user = session.exec(
-                User.select().where(User.username == self.usuario_input.lower().strip())
+                User.select().where(User.email == self.email_input.lower().strip())
             ).first()
 
             if user:    
@@ -364,7 +361,7 @@ class AuthState(rx.State):
                     self.role_logado = user.role
                     self.token_logado = novo_token # Manda para o navegador atual
                     
-                    self.usuario_input = ""
+                    self.email_input = ""
                     self.senha_input = ""
 
                     print(f"Token local: {self.token_logado} | Token banco: {user.session_token}")
@@ -435,7 +432,7 @@ class AuthState(rx.State):
     @rx.event
     def registrar_primeiro_admin(self):
         """Cria o usuário Master e destranca o sistema."""
-        if not self.setup_username or not self.setup_password or not self.setup_confirmacao:
+        if not self.setup_username or not self.setup_password or not self.setup_confirmacao or not self.setup_email:
             yield rx.toast.error("Todos os campos são obrigatórios para criar o administrador.", position="top-right")
             return
         
@@ -454,14 +451,16 @@ class AuthState(rx.State):
             
             novo_admin = User(
                 username=self.setup_username.lower().strip(),
+                email=self.setup_email.lower().strip(),
                 password=hashed.decode('utf-8'),
-                role="admin"
+                role="admin",
             )
             session.add(novo_admin)
             session.commit()
         
         # Loga automaticamente o criador e joga para o painel principal!
         self.setup_username = ""
+        self.setup_email = ""
         self.setup_password = ""
         self.setup_confirmacao = ""
         return rx.redirect("/login")
@@ -523,8 +522,13 @@ class ConfigState(rx.State):
             self.config_buffer[chave] = valor
 
     @rx.event
-    def salvar_configs_env(self):
+    async def salvar_configs_env(self):
         """Salva as alterações do buffer fisicamente no arquivo .env."""
+        sala = await self.get_state(AppState)
+
+        if sala.alterando_configurações:
+            return rx.toast.error("Configurações já estão sendo aplicadas.", position="top-right")
+        
         caminho_env = "Echo/config.env"
         
         # Garante que o arquivo exista
@@ -549,46 +553,6 @@ class ConfigState(rx.State):
             rx.toast.success("Configurações salvas e aplicadas!", position="top-right"),
             AppState.recarregar_configs_da_memoria
         ]
-    
-    # --- EMAILS ---
-    @rx.event
-    def carregar_emails(self):
-        """Puxa os e-mails salvos diretamente do SQLite."""
-        with rx.session() as session:
-            registros = session.exec(EmailDB.select()).all()
-            self.emails = [e.endereco for e in registros]
-
-    @rx.event
-    def adicionar_email(self):
-        """Salva um novo e-mail no banco."""
-        email_limpo = self.novo_email_input.strip().lower()
-
-        if not email_limpo or "@" not in email_limpo:
-            return rx.toast.error("E-mail inválido.", position="top-right")
-        
-        with rx.session() as session:
-            registro = session.exec(EmailDB.select().where(EmailDB.endereco == email_limpo)).first()
-
-            if not registro:
-                novo = EmailDB(endereco=email_limpo)
-                session.add(novo)
-                session.commit()
-                
-                self.novo_email_input = ""
-                self.carregar_emails()
-                return rx.toast.success("E-mail adicionado ao banco!", position="top-right")
-            else:
-                return rx.toast.warning("Este e-mail já está cadastrado.", position="top-right")
-
-    @rx.event
-    def remover_email(self, email_alvo: str):
-        """Deleta o e-mail do banco de dados."""
-        with rx.session() as session:
-            registro = session.exec(EmailDB.select().where(EmailDB.endereco == email_alvo)).first()
-            if registro:
-                session.delete(registro)
-                session.commit()
-                self.carregar_emails()
 
     # --- GRUPOS ---
     @rx.event
@@ -691,6 +655,7 @@ class MonitoramentoState(rx.State):
         
         # Conecta na Sala Global para verificar o status
         sala = await self.get_state(AppState)
+        sala.alterando_configurações = False
         
         # Se o motor central estiver DESLIGADO, joga a lista inativa na TV para os usuários verem!
         if not sala.monitorando and len(sala.ativos_live) == 0:
@@ -876,6 +841,7 @@ class UserManagementState(rx.State):
     
     # Variáveis do formulário de novo usuário
     form_username: str = ""
+    form_email: str = ""
     form_password: str = ""
     form_is_admin: bool = False
 
@@ -889,12 +855,12 @@ class UserManagementState(rx.State):
         """Lê todos os usuários do banco para exibir na tela."""
         with rx.session() as session:
             users = session.exec(User.select()).all()
-            self.lista_usuarios = [{"username": u.username, "role": u.role} for u in users]
+            self.lista_usuarios = [{"username": u.username, "email": u.email, "role": u.role} for u in users]
 
     @rx.event
-    def adicionar_usuario(self):       
-        if not self.form_username or not self.form_password:
-            yield rx.toast.error("Usuário e senha são obrigatórios.", position="top-right")
+    def adicionar_usuario(self):
+        if not self.form_username or not self.form_password or not self.form_email:
+            yield rx.toast.error("Todos os campos são obrigatórios.", position="top-right")
             return
 
         with rx.session() as session:
@@ -911,6 +877,7 @@ class UserManagementState(rx.State):
             
             novo_usuario = User(
                 username=self.form_username.lower().strip(),
+                email=self.form_email.lower().strip(),
                 password=hashed.decode('utf-8'),
                 role="admin" if self.form_is_admin else "operador"
             )
@@ -920,6 +887,7 @@ class UserManagementState(rx.State):
         # Limpa o formulário e atualiza a lista
         self.form_username = ""
         self.form_password = ""
+        self.form_email = ""
         self.form_is_admin = False
         yield rx.toast.success("Usuário criado com sucesso!", position="top-right")
         self.carregar_usuarios()

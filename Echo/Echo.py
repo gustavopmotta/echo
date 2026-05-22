@@ -80,8 +80,8 @@ def tela_login() -> rx.Component:
                     rx.input(
                         rx.input.slot(rx.icon("user")),
                         placeholder="usuário@echo.com", 
-                        on_change=AuthState.set_usuario_input,
-                        value=AuthState.usuario_input,
+                        on_change=AuthState.set_email_input,
+                        value=AuthState.email_input,
                         width="100%",
                         size="3"
                     ),
@@ -121,39 +121,52 @@ def tela_login() -> rx.Component:
 # --- TELA DE SETUP INICIAL ---
 def tela_setup_inicial() -> rx.Component:
     return rx.center(
-        rx.card(
-            rx.vstack(
-                rx.heading("Bem-vindo ao Echo!", size="7"),
-                rx.text("Crie o usuário Administrador para inicializar o sistema.", size="1", text_align="center", color="gray", margin_bottom="1em"),
-                
-                rx.input(
-                    rx.input.slot(rx.icon("user_star")),
-                    placeholder="Nome do Administrador", 
-                    on_change=AuthState.set_setup_username,
-                    value=AuthState.setup_username,
-                    width="100%"
-                ),
-                rx.input(
-                    rx.input.slot(rx.icon("lock")),
-                    type="password",
-                    placeholder="Senha",
-                    on_change=AuthState.set_setup_password,
-                    value=AuthState.setup_password,
-                    width="100%"
-                ),
-                rx.input(
-                    rx.input.slot(rx.icon("lock")),
-                    type="password", 
-                    placeholder="Confirme a Senha",
-                    on_change=AuthState.set_setup_confirmacao,
-                    value=AuthState.setup_confirmacao,
-                    width="100%"
-                ),
-                
-                rx.button("Criar Administrador", on_click=AuthState.registrar_primeiro_admin, width="100%", color_scheme="purple", size="3", weight="bold"),
-                
-                align_items="center",
-                spacing="4"
+        rx.form(
+            rx.card(
+                rx.vstack(
+                    rx.heading("Bem-vindo ao Echo!", size="7"),
+                    rx.text("Crie o usuário Administrador para inicializar o sistema.", size="1", text_align="center", color="gray", margin_bottom="1em"),
+
+                    rx.input(
+                        rx.input.slot(rx.icon("user_star")),
+                        placeholder="Nome do Administrador", 
+                        on_change=AuthState.set_setup_username,
+                        value=AuthState.setup_username,
+                        width="100%",
+                        auto_complete=False
+                    ),
+                    rx.input(
+                        rx.input.slot(rx.icon("mail")),
+                        placeholder="Email do Administrador", 
+                        on_change=AuthState.set_setup_email,
+                        value=AuthState.setup_email,
+                        width="100%",
+                        auto_complete=False
+                    ),
+                    rx.input(
+                        rx.input.slot(rx.icon("lock")),
+                        type="password",
+                        placeholder="Senha",
+                        on_change=AuthState.set_setup_password,
+                        value=AuthState.setup_password,
+                        width="100%",
+                        auto_complete=False
+                    ),
+                    rx.input(
+                        rx.input.slot(rx.icon("lock")),
+                        type="password", 
+                        placeholder="Confirme a Senha",
+                        on_change=AuthState.set_setup_confirmacao,
+                        value=AuthState.setup_confirmacao,
+                        width="100%",
+                        auto_complete=False
+                    ),
+
+                    rx.button("Criar Administrador", on_click=AuthState.registrar_primeiro_admin, width="100%", color_scheme="purple", size="3", weight="bold", type="submit"),
+
+                    align_items="center",
+                    spacing="4"
+                ),   
             ),
             size="4",
             width="100%",
@@ -170,128 +183,138 @@ def configurações_gerais() -> rx.Component:
         rx.divider(margin_y="1em"),
 
         # Scroll area previne que o modal fique gigante na tela
-        rx.scroll_area(
-            rx.callout("O sistema reiniciará ao salvar alterações", icon="info", color_scheme="blue", variant="surface"),
-            rx.vstack(
-                # SEÇÃO 1: SERVIDOR DE E-MAIL
-                rx.text("Servidor de E-mail (SMTP)", weight="bold", padding_top="0.5em"),
-                rx.hstack(
-                    rx.vstack(
-                        rx.text("Servidor SMTP:", size="2"),
-                        rx.input(
-                            value=ConfigState.config_buffer["smtp_server"],
-                            on_change=lambda v: ConfigState.atualizar_buffer("smtp_server", v),
-                            placeholder="mail.dominio.com.br",
-                            width="100%",
-                            auto_complete=False
-                        ),
-                        spacing="1",
-                        flex="1",
-                    ),
-                    rx.vstack(
-                        rx.text("Porta SMTP:", size="2"),
-                        rx.input(
-                            value=ConfigState.config_buffer["smtp_port"],
-                            on_change=lambda v: ConfigState.atualizar_buffer("smtp_port", v),
-                            placeholder="465",
-                            width="100%",
-                            auto_complete=False
-                        ),
-                        spacing="1",
-                        flex="1"
-                    ),
-                    spacing="2",
-                    width="100%",
-                ),
+        rx.cond(
+            AppState.alterando_configurações,
 
-                rx.hstack(
-                    rx.vstack(
-                        rx.text("Login:", size="2"),
-                        rx.input(
-                            value=ConfigState.config_buffer["smtp_login"],
-                            on_change=lambda v: ConfigState.atualizar_buffer("smtp_login", v),
-                            placeholder="alertas@dominio.com.br",
-                            width="100%",
-                            auto_complete=False
-                        ),
-                        spacing="1",
-                        flex="1"
-                    ),
-                    rx.vstack(
-                        rx.text("Senha:", size="2"),
-                        rx.input(
-                            value=ConfigState.config_buffer["smtp_password"],
-                            on_change=lambda v: ConfigState.atualizar_buffer("smtp_password", v),
-                            type="password",
-                            placeholder="********",
-                            width="100%",
-                            auto_complete=False
-                        ),
-                        spacing="1",
-                        flex="1"
-                    ),
-                    spacing="2",
-                    width="100%",
-                ),
-
-                rx.divider(margin_y=".5em"),
-
-                # SEÇÃO 2: REGRAS DE MONITORAMENTO
-                rx.text("Regras de Monitoramento", weight="bold"),
-                rx.hstack(
-                    rx.vstack(
-                        rx.text("Intervalo de Ping (segundos):", size="2"),
-                        rx.input(
-                            value=ConfigState.config_buffer["intervalo_segundos"],
-                            on_change=lambda v: ConfigState.atualizar_buffer("intervalo_segundos", v),
-                            placeholder="10",
-                            width="100%"
-                        ),
-                        spacing="1",
-                        flex="1",
-                    ),
-                    rx.vstack(
-                        rx.text("Latência Crítica (ms):", size="2"),
-                        rx.input(
-                            value=ConfigState.config_buffer["limite_latencia_ms"],
-                            on_change=lambda v: ConfigState.atualizar_buffer("limite_latencia_ms", v),
-                            placeholder="100",
-                            width="100%"
-                        ),
-                        spacing="1",
-                        flex="1"
-                    ),
-                ),
-                rx.hstack(
-                    rx.vstack(
-                        rx.text("Máximo Pings no Gráfico:", size="2"),
-                        rx.input(
-                            value=ConfigState.config_buffer["pings_maximos"],
-                            on_change=lambda v: ConfigState.atualizar_buffer("pings_maximos", v),
-                            placeholder="12",
-                            width="100%"
-                        ),
-                        spacing="1",
-                        flex="1",
-                    ),
-                    rx.vstack(
-                        rx.text("Frequência de E-mail (minutos):", size="2"),
-                        rx.input(
-                            value=ConfigState.config_buffer["frequencia_emails"],
-                            on_change=lambda v: ConfigState.atualizar_buffer("frequencia_emails", v),
-                            placeholder="60",
-                            width="100%"
-                        ),
-                        spacing="1",
-                        flex="1"
-                    ),
-                ),
-                width="100%",
-                align_items="stretch",
+            rx.hstack(
+                rx.spinner(size="2"),
+                rx.text("Aplicando configurações, por favor aguarde...", size="2", color="gray"),
             ),
-            type="scroll",
-            style={"max_height": "50vh"}, # Limita a altura para caber em telas menores
-            padding_right="1em"
+            
+
+            rx.scroll_area(
+                rx.callout("O sistema reiniciará ao salvar alterações", icon="info", color_scheme="blue",   variant="surface"),
+                rx.vstack(
+                    # SEÇÃO 1: SERVIDOR DE E-MAIL
+                    rx.text("Servidor de E-mail (SMTP)", weight="bold", padding_top="0.5em"),
+                    rx.hstack(
+                        rx.vstack(
+                            rx.text("Servidor SMTP:", size="2"),
+                            rx.input(
+                                value=ConfigState.config_buffer["smtp_server"],
+                                on_change=lambda v: ConfigState.atualizar_buffer("smtp_server", v),
+                                placeholder="mail.dominio.com.br",
+                                width="100%",
+                                auto_complete=False
+                            ),
+                            spacing="1",
+                            flex="1",
+                        ),
+                        rx.vstack(
+                            rx.text("Porta SMTP:", size="2"),
+                            rx.input(
+                                value=ConfigState.config_buffer["smtp_port"],
+                                on_change=lambda v: ConfigState.atualizar_buffer("smtp_port", v),
+                                placeholder="465",
+                                width="100%",
+                                auto_complete=False
+                            ),
+                            spacing="1",
+                            flex="1"
+                        ),
+                        spacing="2",
+                        width="100%",
+                    ),
+
+                    rx.hstack(
+                        rx.vstack(
+                            rx.text("Login:", size="2"),
+                            rx.input(
+                                value=ConfigState.config_buffer["smtp_login"],
+                                on_change=lambda v: ConfigState.atualizar_buffer("smtp_login", v),
+                                placeholder="alertas@dominio.com.br",
+                                width="100%",
+                                auto_complete=False
+                            ),
+                            spacing="1",
+                            flex="1"
+                        ),
+                        rx.vstack(
+                            rx.text("Senha:", size="2"),
+                            rx.input(
+                                value=ConfigState.config_buffer["smtp_password"],
+                                on_change=lambda v: ConfigState.atualizar_buffer("smtp_password", v),
+                                type="password",
+                                placeholder="********",
+                                width="100%",
+                                auto_complete=False
+                            ),
+                            spacing="1",
+                            flex="1"
+                        ),
+                        spacing="2",
+                        width="100%",
+                    ),
+
+                    rx.divider(margin_y=".5em"),
+
+                    # SEÇÃO 2: REGRAS DE MONITORAMENTO
+                    rx.text("Regras de Monitoramento", weight="bold"),
+                    rx.hstack(
+                        rx.vstack(
+                            rx.text("Intervalo de Ping (segundos):", size="2"),
+                            rx.input(
+                                value=ConfigState.config_buffer["intervalo_segundos"],
+                                on_change=lambda v: ConfigState.atualizar_buffer("intervalo_segundos", v),
+                                placeholder="10",
+                                width="100%"
+                            ),
+                            spacing="1",
+                            flex="1",
+                        ),
+                        rx.vstack(
+                            rx.text("Latência Crítica (ms):", size="2"),
+                            rx.input(
+                                value=ConfigState.config_buffer["limite_latencia_ms"],
+                                on_change=lambda v: ConfigState.atualizar_buffer("limite_latencia_ms", v),
+                                placeholder="100",
+                                width="100%"
+                            ),
+                            spacing="1",
+                            flex="1"
+                        ),
+                    ),
+                    rx.hstack(
+                        rx.vstack(
+                            rx.text("Máximo Pings no Gráfico:", size="2"),
+                            rx.input(
+                                value=ConfigState.config_buffer["pings_maximos"],
+                                on_change=lambda v: ConfigState.atualizar_buffer("pings_maximos", v),
+                                placeholder="12",
+                                width="100%"
+                            ),
+                            spacing="1",
+                            flex="1",
+                        ),
+                        rx.vstack(
+                            rx.text("Frequência de E-mail (minutos):", size="2"),
+                            rx.input(
+                                value=ConfigState.config_buffer["frequencia_emails"],
+                                on_change=lambda v: ConfigState.atualizar_buffer("frequencia_emails", v),
+                                placeholder="60",
+                                width="100%"
+                            ),
+                            spacing="1",
+                            flex="1"
+                        ),
+                    ),
+                    width="100%",
+                    align_items="stretch",
+                ),
+                type="scroll",
+                style={"max_height": "50vh"}, # Limita a altura para caber em telas menores
+                padding_right="1em"
+            ),
         ),
     
         rx.divider(margin_y="1em"),
@@ -299,54 +322,12 @@ def configurações_gerais() -> rx.Component:
         rx.button(
             "Salvar Alterações", 
             on_click=ConfigState.salvar_configs_env, 
+            loading=AppState.alterando_configurações,
             color_scheme="purple", 
-            width="100%"
+            width="100%" 
         ),
 
         value="config"
-    ),
-
-# --- CAIXA/ABA DE CONFIGURAÇÕES DE EMAILS ---
-def configurações_emails() -> rx.Component:
-    return rx.tabs.content(
-        rx.dialog.title("Cadastro de Emails", padding_top="1em"),
-        rx.dialog.description("Gerencie os emails que receberão os alertas de status dos ativos."),
-
-        rx.divider(margin_y="1em"),
-
-        rx.vstack(
-            # Lista de emails atuais
-            rx.foreach(
-                ConfigState.emails, 
-                lambda email: rx.card(
-                    rx.hstack(
-                        rx.text(email, width="100%"),
-                        rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_email(email), color_scheme="red", variant="ghost"),
-                        width="100%",
-                        align_items="center",
-                    ),
-                )
-            ),
-            rx.divider(margin_y="1em"),
-
-            rx.card(
-                rx.text("Adicionar novo email:", size="3", font_weight="bold", padding_bottom="0.5em"),
-                rx.hstack(
-                    rx.input(
-                        placeholder="novo@dominio.com", 
-                        on_change=ConfigState.set_novo_email_input, 
-                        value=ConfigState.novo_email_input,
-                        width="100%"
-                    ),
-                    rx.icon_button(rx.icon("plus"), on_click=ConfigState.adicionar_email, color_scheme="green"),
-                    width="100%"
-                ),
-            ),
-            align_items="stretch",
-            width="100%",
-        ),
-
-        value="emails"
     ),
 
 # --- CAIXA/ABA DE CONFIGURAÇÕES DE ATIVOS ---
@@ -361,65 +342,69 @@ def configurações_ativos() -> rx.Component:
 
                 rx.divider(margin_y="1em"),
 
-                rx.vstack(
-                    rx.hstack(
-                        rx.input(
-                            rx.input.slot(rx.icon("tag")),
-                            placeholder="Nome do Ativo", 
-                            on_change=MonitoramentoState.set_novo_ativo_nome,
-                            value=MonitoramentoState.novo_ativo_nome,
-                            flex="1",
-                        ),
+                rx.form(
+                    rx.vstack(
+                        rx.hstack(
+                            rx.input(
+                                rx.input.slot(rx.icon("tag")),
+                                placeholder="Nome do Ativo", 
+                                on_change=MonitoramentoState.set_novo_ativo_nome,
+                                value=MonitoramentoState.novo_ativo_nome,
+                                flex="1",
+                            ),
 
-                        rx.select(
-                            ConfigState.nomes_dos_grupos, # Variável da lista de grupos
-                            value=MonitoramentoState.novo_ativo_grupo,
-                            on_change=MonitoramentoState.set_novo_ativo_grupo,
-                            placeholder="Grupo",
-                        ),
-                        
-                        width="100%",
-                    ),
-                    rx.hstack(
-                        rx.input(
-                            rx.input.slot(rx.icon("network")),
-                            placeholder="Endereço IP", 
-                            on_change=MonitoramentoState.set_novo_ativo_ip, 
-                            value=MonitoramentoState.novo_ativo_ip,
-                            width="100%"
-                        ),
-                        rx.input(
-                            rx.input.slot(rx.icon("map_pin")),
-                            placeholder="Localização", 
-                            on_change=MonitoramentoState.set_novo_ativo_local, 
-                            value=MonitoramentoState.novo_ativo_local,
-                            width="100%"
-                        ),
-                    ),
+                            rx.select(
+                                ConfigState.nomes_dos_grupos, # Variável da lista de grupos
+                                value=MonitoramentoState.novo_ativo_grupo,
+                                on_change=MonitoramentoState.set_novo_ativo_grupo,
+                                placeholder="Grupo",
+                            ),
 
-                    rx.flex(
-                        rx.alert_dialog.cancel(
-                            rx.button(
-                                "Cancelar", 
-                                color_scheme="gray", 
-                                variant="soft"
-                            )
+                            width="100%",
                         ),
-                        rx.alert_dialog.action(
-                            rx.button(
-                                "Adicionar", 
-                                on_click=MonitoramentoState.adicionar_ativo_buffer, 
-                                color_scheme="green"
+                        rx.hstack(
+                            rx.input(
+                                rx.input.slot(rx.icon("network")),
+                                placeholder="Endereço IP", 
+                                on_change=MonitoramentoState.set_novo_ativo_ip, 
+                                value=MonitoramentoState.novo_ativo_ip,
+                                width="100%"
+                            ),
+                            rx.input(
+                                rx.input.slot(rx.icon("map_pin")),
+                                placeholder="Localização", 
+                                on_change=MonitoramentoState.set_novo_ativo_local, 
+                                value=MonitoramentoState.novo_ativo_local,
+                                width="100%"
                             ),
                         ),
 
-                        spacing="3",
-                        justify="end",
-                        width="100%",
-                    ),
+                        rx.flex(
+                            rx.alert_dialog.cancel(
+                                rx.button(
+                                    "Cancelar", 
+                                    color_scheme="gray", 
+                                    variant="soft"
+                                )
+                            ),
+                            rx.alert_dialog.action(
+                                rx.button(
+                                    "Adicionar", 
+                                    type="submit", 
+                                    color_scheme="green"
+                                ),
+                            ),
 
-                    spacing="3",
+                            spacing="3",
+                            justify="end",
+                            width="100%",
+                        ),
+
+                        spacing="3",
+                    ),
+                    on_submit=MonitoramentoState.adicionar_ativo_buffer,
                 ),
+                
 
                 width="30%",
                 open=MonitoramentoState.novo_ativo_nome != ""
@@ -712,7 +697,8 @@ def configurações_usuarios() -> rx.Component:
                         lambda u: rx.card(
                             rx.hstack(
                                 rx.vstack(
-                                    rx.text(u["username"], font_weight="bold"),
+                                    rx.text(u["username"], text_transform="capitalize", font_weight="bold"),
+                                    rx.text(f"Email: {u['email']}", size="1", color="gray", padding_bottom="0.5em"),
                                     rx.hstack(
                                         rx.badge(
                                             rx.cond(u["role"] == "admin", "Administrador", "Operador"),
@@ -724,7 +710,7 @@ def configurações_usuarios() -> rx.Component:
                                         ),
                                         spacing="1"
                                     ),
-                                    spacing="1",
+                                    spacing="0",
                                     align_items="start"
                                 ),
                                 rx.spacer(),
@@ -754,10 +740,17 @@ def configurações_usuarios() -> rx.Component:
                 rx.text("Criar Novo Usuário", font_weight="bold", margin_bottom="1em"),
                 rx.vstack(
                     rx.input(
-                        rx.input.slot(rx.icon("mail", color="gray")),
-                        placeholder="Email", 
+                        rx.input.slot(rx.icon("user", color="gray")),
+                        placeholder="Nome de Usuário", 
                         value=UserManagementState.form_username, 
                         on_change=UserManagementState.set_form_username,
+                        width="100%"
+                    ),
+                    rx.input(
+                        rx.input.slot(rx.icon("mail", color="gray")),
+                        placeholder="Email", 
+                        value=UserManagementState.form_email, 
+                        on_change=UserManagementState.set_form_email,
                         width="100%"
                     ),
                     rx.input(
@@ -831,15 +824,11 @@ def index() -> rx.Component:
                         rx.tabs.root(
                             rx.tabs.list(
                                 rx.tabs.trigger("Configurações", value="config", color_scheme="purple"),
-                                rx.tabs.trigger("Gerenciar Emails", value="emails", color_scheme="orange"),
                                 rx.tabs.trigger("Gerenciar Ativos", value="ativos", color_scheme="blue"),
                             ),
 
                             # --- Configurações Gerais ---
                             configurações_gerais(),
-
-                            # --- Configurações de Emails ---
-                            configurações_emails(),
 
                             # --- Configurações de Ativos ---
                             configurações_ativos(),
@@ -860,7 +849,7 @@ def index() -> rx.Component:
                     content="Sair"
                 ),
             ),
-            
+
             rx.divider(margin_y="1em"),
             
             # Cards de ativos
@@ -887,7 +876,6 @@ app.add_page(index, title="Painel - Echo", on_load=[
     AuthState.verificar_acesso,
     MonitoramentoState.on_load,
     UserManagementState.carregar_usuarios,
-    ConfigState.carregar_emails,
     ConfigState.carregar_grupos,
     ConfigState.carregar_configs,
     AppState.conectar_painel
