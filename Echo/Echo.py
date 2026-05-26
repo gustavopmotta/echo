@@ -19,7 +19,6 @@ def renderizar_card(ativo: AtivoRede):
             radius=[4, 4, 0, 0]
         ),
         rx.recharts.x_axis(data_key="hora", hide=False),
-        # Lê o limite dinamicamente do ConfigState
         rx.recharts.y_axis(hide=False, width=40, domain=[0, ConfigState.config["limite_latencia_ms"]]),
         rx.recharts.graphing_tooltip(),
         data=ativo.historico,
@@ -65,6 +64,33 @@ def renderizar_card(ativo: AtivoRede):
         ),
         border_top=f"4px solid var(--{cor_borda}-9)",
         width="100%",
+    )
+
+def renderizar_bloco_grupo(dados_do_grupo):
+    """
+    Recebe um item do dicionário.
+    dados_do_grupo[0] = Nome do Grupo (String)
+    dados_do_grupo[1] = Lista de Ativos daquele grupo (List)
+    """
+    nome_grupo = dados_do_grupo[0]
+    lista_ativos = dados_do_grupo[1]
+    
+    return rx.card(
+        rx.heading(nome_grupo, size="6", width="100%", text_align="center"),
+        rx.divider(margin_y="1em", size="4"),
+
+        rx.grid(
+            rx.foreach(
+                lista_ativos,
+                renderizar_card
+            ),
+            columns="3",
+            spacing="4",
+            width="100%"
+        ),
+        
+        margin_bottom="0.5em",
+        width="100%"
     )
 
 # --- TELA DE LOGIN ---
@@ -184,12 +210,9 @@ def configurações_gerais() -> rx.Component:
 
         # Scroll area previne que o modal fique gigante na tela
         rx.cond(
-            AppState.alterando_configurações,
+            AuthState.role_logado != "admin",
 
-            rx.hstack(
-                rx.spinner(size="2"),
-                rx.text("Aplicando configurações, por favor aguarde...", size="2", color="gray"),
-            ),
+            rx.callout("Acesso restrito para administradores.", icon="shield_check", color_scheme="red", variant="soft"),
             
 
             rx.scroll_area(
@@ -322,7 +345,6 @@ def configurações_gerais() -> rx.Component:
         rx.button(
             "Salvar Alterações", 
             on_click=ConfigState.salvar_configs_env, 
-            loading=AppState.alterando_configurações,
             color_scheme="purple", 
             width="100%" 
         ),
@@ -334,7 +356,7 @@ def configurações_gerais() -> rx.Component:
 def configurações_ativos() -> rx.Component:
     def modal_adicionar_ativo() -> rx.Component:
         return rx.alert_dialog.root(
-            rx.alert_dialog.trigger(rx.button(rx.icon("plus"), "Adicionar Ativo", color_scheme="green", flex="1")),
+            rx.alert_dialog.trigger(rx.button(rx.icon("plus"), "Novo", color_scheme="green", flex="1")),
 
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Adicionar Ativo de Rede"),
@@ -413,7 +435,7 @@ def configurações_ativos() -> rx.Component:
 
     def modal_gerenciar_grupos() -> rx.Component:
         return rx.alert_dialog.root(
-            rx.alert_dialog.trigger(rx.button(rx.icon("tags"), "Gerenciar Grupos", color_scheme="gray", variant="soft", flex="1")),
+            rx.alert_dialog.trigger(rx.button(rx.icon("tags"), "Grupos", color_scheme="purple", flex="1")),
 
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Gerenciar Grupos de Ativos"),
@@ -547,6 +569,53 @@ def configurações_ativos() -> rx.Component:
             open=MonitoramentoState.ip_edicao != "", 
         )
 
+    def modal_importacao() -> rx.Component:
+        return rx.alert_dialog.root(
+            rx.tooltip(
+                rx.alert_dialog.trigger(rx.icon_button(rx.icon("download"), color_scheme="blue", variant="soft")),
+                content="Importar CSV"
+            ),
+            
+
+            rx.alert_dialog.content(
+                rx.vstack(
+                    rx.upload(
+                        rx.vstack(
+                            rx.icon("upload", size=30, color="gray"),
+                            rx.text("Clique ou arraste o arquivo CSV aqui para importar", color="gray", font_weight="bold"),
+                            rx.text("O upload será iniciado automaticamente", size="2", color="gray"),
+                            padding="4",
+                        ),
+                        id="upload_csv",
+                        # O PULO DO GATO: O gatilho fica aqui no on_drop, acionado ao soltar/selecionar o arquivo!
+                        on_drop=MonitoramentoState.importar_ativos_csv(rx.upload_files(upload_id="upload_csv")),
+                        border="2px dashed gray",
+                        padding="1",
+                        border_radius="md",
+                        width="100%",
+                    ),
+                    rx.hstack(
+                        rx.alert_dialog.action(
+                            rx.button(
+                                "Processar e Importar Ativos",
+                                color_scheme="green",
+                                margin_top="4"
+                            ),
+                        ),
+                        rx.alert_dialog.cancel(
+                            rx.button(
+                                "Cancelar",
+                                color_scheme="gray",
+                                variant="soft"
+                            )
+                        ),
+                    ),
+                    width="100%",
+                    padding="4"
+                )
+            )
+        )
+
     return rx.tabs.content(
         rx.dialog.title("Gerenciar Ativos de Rede", padding_top="1em"),
         rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado durante a edição."),
@@ -599,12 +668,17 @@ def configurações_ativos() -> rx.Component:
                 padding_right="1em",
             ),
 
-            rx.divider(margin_y="1em"),
+            rx.divider(margin_y="0.5em"),
             
             rx.hstack(
                 modal_adicionar_ativo(),
-
                 modal_gerenciar_grupos(),
+                modal_importacao(),
+
+                rx.tooltip(
+                    rx.icon_button(rx.icon("upload"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
+                    content="Exportar CSV"
+                ),
 
                 width="100%",
                 spacing="3"
@@ -853,12 +927,16 @@ def index() -> rx.Component:
             rx.divider(margin_y="1em"),
             
             # Cards de ativos
-            rx.grid(
-                rx.foreach(AppState.ativos_live, renderizar_card),
-                columns="3",
-                spacing="4",
-                width="100%"
+            rx.vstack(
+                # Itera sobre o dicionário agrupado que criamos no Passo 1
+                rx.foreach(
+                    AppState.ativos_agrupados,
+                    renderizar_bloco_grupo
+                ),
+                width="100%",
+                padding="4"
             ),
+
             padding="2em",
             align_items="center",
         ),

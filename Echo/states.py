@@ -10,6 +10,9 @@ import icmplib
 import smtplib
 import bcrypt
 import uuid
+import csv
+import io
+import ipaddress
 
 # Criação do arquivo config.env se não existir
 if not os.path.exists("Echo/config.env"):
@@ -159,13 +162,26 @@ class AppState(rx.SharedState):
     ativos_buffer: list[dict[str, str]] = []
     buffer_iniciado: bool = False
 
-    alterando_configurações: bool = False
     proximo_relatorio: int = 0
 
     ram_intervalo: int = 10
     ram_limite_ms: int = 100
     ram_max_pings: int = 12
     ram_freq_emails: int = 60
+
+    @rx.var
+    def ativos_agrupados(self) -> dict[str, list[AtivoRede]]:
+        """Pega a lista reta de ativos e agrupa em um Dicionário por Grupo."""
+        grupos = {}
+        for ativo in self.ativos_live:
+            nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
+            
+            if nome_grupo not in grupos:
+                grupos[nome_grupo] = []
+                
+            grupos[nome_grupo].append(ativo)
+            
+        return grupos
 
     @rx.event
     async def recarregar_configs_da_memoria(self):
@@ -175,7 +191,6 @@ class AppState(rx.SharedState):
         self.ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
         self.ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
         self.ram_freq_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
-        self.alterando_configurações = True
 
     @rx.event
     async def conectar_painel(self):
@@ -525,9 +540,6 @@ class ConfigState(rx.State):
     async def salvar_configs_env(self):
         """Salva as alterações do buffer fisicamente no arquivo .env."""
         sala = await self.get_state(AppState)
-
-        if sala.alterando_configurações:
-            return rx.toast.error("Configurações já estão sendo aplicadas.", position="top-right")
         
         caminho_env = "Echo/config.env"
         
@@ -655,7 +667,6 @@ class MonitoramentoState(rx.State):
         
         # Conecta na Sala Global para verificar o status
         sala = await self.get_state(AppState)
-        sala.alterando_configurações = False
         
         # Se o motor central estiver DESLIGADO, joga a lista inativa na TV para os usuários verem!
         if not sala.monitorando and len(sala.ativos_live) == 0:
@@ -815,6 +826,119 @@ class MonitoramentoState(rx.State):
 
         await self.cancelar_edicao_ativo() # Fecha o modal
         return rx.toast.info("Alteração feita. Clique em 'Salvar' para aplicar no Banco!", position="top-right")
+
+    @rx.event
+    async def importar_ativos_csv(self, arquivos):
+        if not arquivos:
+            return rx.toast.error("Nenhum arquivo foi enviado!", position="top-right")
+            
+        arquivo = arquivos[0]
+        # Lê os bytes do arquivo enviado e decodifica para texto
+        conteudo_bytes = await arquivo.read()
+        conteudo_texto = conteudo_bytes.decode("utf-8")
+        
+        # Transforma o texto em um leitor de dicionário CSV
+        leitor_csv = csv.DictReader(io.StringIO(conteudo_texto))
+        
+        ativos_para_salvar = []
+        linhas_com_erro = []
+        
+        # Puxa os grupos existentes no banco para validar se o grupo do CSV existe
+        with rx.session() as session:
+            grupos_existentes = {g.nome for g in session.exec(GrupoDB.select()).all()}
+        
+        for index, linha in enumerate(leitor_csv, start=1):
+            nome = linha.get("nome", "").strip()
+            ip = linha.get("ip", "").strip()
+            local = linha.get("local", "").strip()
+            grupo = linha.get("grupo", "").strip()
+            
+            # Validação 1: Campos obrigatórios
+            if not nome or not ip:
+                linhas_com_erro.append(f"Linha {index}: Nome ou IP ausentes.")
+                continue
+                
+            # Validação 2: Verificar se o IP é semanticamente válido
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                linhas_com_erro.append(f"Linha {index}: O IP '{ip}' é inválido.")
+                continue
+                
+            # Validação 3: Se o grupo não existir no banco, joga para o padrão ou cria um alerta
+            if grupo and grupo not in grupos_existentes:
+                grupo = "GERAL" # Grupo padrão de escape
+                
+            ativos_para_salvar.append(
+                AtivoDB(nome=nome, ip=ip, local=local, grupo=grupo)
+            )
+            
+        # Gravação no Banco de Dados
+        if ativos_para_salvar:
+            with rx.session() as session:
+                for ativo in ativos_para_salvar:
+                    session.add(ativo)
+                session.commit()
+                
+        # 3. O PULO DO GATO: Sincroniza e redesenha a TV Global imediatamente!
+        # Força o painel central a reler o banco de dados e atualizar os cards na tela de todo mundo
+        sala = await self.get_state(AppState)
+        sala.buffer_iniciado = False # Força a recarga total do banco na inicialização
+        await sala.conectar_painel() 
+        
+        # Retornos visuais para o usuário
+        if linhas_com_erro:
+            # Se houver erros parciais, avisa quais linhas falharam
+            return [
+                rx.toast.success(f"{len(ativos_para_salvar)} ativos importados!", position="top-right"),
+                rx.toast.warning(f"Falha em {len(linhas_com_erro)} linhas. Verifique o console.", position="top-right")
+            ]
+            
+        return rx.toast.success("Todos os ativos foram importados com sucesso!", position="top-right")
+
+    @rx.event
+    def exportar_ativos_csv(self):
+        """Busca os dados no banco e gera um CSV para download."""
+        # 1. Puxa a fonte da verdade absoluta (O Banco de Dados)
+        with rx.session() as session:
+            ativos_db = session.exec(AtivoDB.select()).all()
+            
+        if not ativos_db:
+            return rx.toast.warning("Não há ativos cadastrados para exportar.", position="top-right")
+
+        # 2. Cria um arquivo de texto virtual na memória RAM
+        saida_csv = io.StringIO()
+        
+        # 3. Define o cabeçalho EXATAMENTE igual ao esperado na importação
+        campos = ["nome", "ip", "local", "grupo"]
+        escritor = csv.DictWriter(saida_csv, fieldnames=campos)
+        
+        escritor.writeheader()
+        
+        # 4. Preenche as linhas
+        for ativo in ativos_db:
+            escritor.writerow({
+                "nome": ativo.nome,
+                "ip": ativo.ip,
+                "local": ativo.local,
+                "grupo": ativo.grupo
+            })
+            
+        # 5. Extrai o texto final gerado
+        conteudo_csv = saida_csv.getvalue()
+        
+        # 6. Gera um nome de arquivo elegante com a data de hoje
+        data_atual = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        nome_arquivo = f"backup_ativos_{data_atual}.csv"
+        
+        # 7. Dispara o gatilho de download nativo do Reflex para o navegador
+        return [
+            rx.download(
+                data=conteudo_csv,
+                filename=nome_arquivo
+            ),
+            rx.toast.info("Download do backup iniciado!", position="top-right")
+        ]
 
     @rx.event
     async def dar_ignicao_global(self):
