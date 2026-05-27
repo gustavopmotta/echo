@@ -3,7 +3,7 @@ from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserMa
 
 radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'brown', 'orange', 'sky', 'mint', 'lime', 'yellow', 'amber', 'gold', 'bronze', 'gray']
 
-# --- CARD ---
+# --- CARD DE ATIVO ---
 def renderizar_card(ativo: AtivoRede):
     cor_borda = rx.cond(ativo.status == "Online", "green", 
                 rx.cond(ativo.status == "Lento", "orange", "red"))
@@ -12,11 +12,11 @@ def renderizar_card(ativo: AtivoRede):
     grafico = rx.recharts.bar_chart(
         rx.recharts.bar(
             data_key="latencia",
-            is_animation_active=True,
+            is_animation_active=False,
             fill=rx.color(cor_borda, 8),
             stroke=rx.color(cor_borda, 10),
             stroke_width=2,
-            radius=[4, 4, 0, 0]
+            radius=[4, 4, 0, 0],
         ),
         rx.recharts.x_axis(data_key="hora", hide=False),
         rx.recharts.y_axis(hide=False, width=40, domain=[0, ConfigState.config["limite_latencia_ms"]]),
@@ -66,6 +66,7 @@ def renderizar_card(ativo: AtivoRede):
         width="100%",
     )
 
+# --- CARD DE GRUPO ---
 def renderizar_bloco_grupo(dados_do_grupo):
     """
     Recebe um item do dicionário.
@@ -572,47 +573,156 @@ def configurações_ativos() -> rx.Component:
     def modal_importacao() -> rx.Component:
         return rx.alert_dialog.root(
             rx.tooltip(
-                rx.alert_dialog.trigger(rx.icon_button(rx.icon("download"), color_scheme="blue", variant="soft")),
+                rx.alert_dialog.trigger(
+                    rx.icon_button(rx.icon("upload"), color_scheme="blue", variant="soft")
+                ),
                 content="Importar CSV"
             ),
-            
 
             rx.alert_dialog.content(
+                rx.alert_dialog.title("Importar Ativos via CSV"),
+                rx.alert_dialog.description(
+                    "O arquivo deve conter as colunas: ",
+                    rx.code("nome, ip, local, grupo"),
+                    ". IPs já cadastrados serão ignorados."
+                ),
+
+                rx.divider(margin_y="1em"),
+
                 rx.vstack(
-                    rx.upload(
-                        rx.vstack(
-                            rx.icon("upload", size=30, color="gray"),
-                            rx.text("Clique ou arraste o arquivo CSV aqui para importar", color="gray", font_weight="bold"),
-                            rx.text("O upload será iniciado automaticamente", size="2", color="gray"),
-                            padding="4",
-                        ),
-                        id="upload_csv",
-                        # O PULO DO GATO: O gatilho fica aqui no on_drop, acionado ao soltar/selecionar o arquivo!
-                        on_drop=MonitoramentoState.importar_ativos_csv(rx.upload_files(upload_id="upload_csv")),
-                        border="2px dashed gray",
-                        padding="1",
-                        border_radius="md",
-                        width="100%",
-                    ),
-                    rx.hstack(
-                        rx.alert_dialog.action(
-                            rx.button(
-                                "Processar e Importar Ativos",
-                                color_scheme="green",
-                                margin_top="4"
+                    # Área de upload — some quando há preview
+                    rx.cond(
+                        ~MonitoramentoState.preview_total > 0,
+                        rx.upload(
+                            rx.vstack(
+                                rx.icon("file_up", size=30, color="gray"),
+                                rx.text(
+                                    "Clique ou arraste o arquivo CSV aqui",
+                                    color="gray",
+                                    font_weight="bold"
+                                ),
+                                rx.text(
+                                    "Uma pré-visualização aparecerá antes de confirmar.",
+                                    size="2",
+                                    color="gray"
+                                ),
+                                spacing="1",
+                                align_items="center",
                             ),
+                            id="upload_csv",
+                            on_drop=MonitoramentoState.carregar_preview_csv(
+                                rx.upload_files(upload_id="upload_csv")
+                            ),
+                            accept={".csv": ["text/csv"]},
+                            border="2px dashed gray",
+                            padding="1em",
+                            border_radius="md",
+                            width="100%",
                         ),
+                        rx.vstack(
+                            rx.hstack(
+                                rx.icon("table", size=16, color="gray"),
+                                rx.text(
+                                    f"{MonitoramentoState.preview_total} linha(s) encontrada(s)",
+                                    size="2",
+                                    color="gray"
+                                ),
+                                spacing="1",
+                                align_items="center",
+                            ),
+
+                            rx.scroll_area(
+                                rx.table.root(
+                                    rx.table.header(
+                                        rx.table.row(
+                                            rx.table.column_header_cell("Nome"),
+                                            rx.table.column_header_cell("IP"),
+                                            rx.table.column_header_cell("Local"),
+                                            rx.table.column_header_cell("Grupo"),
+                                            rx.table.column_header_cell("Status"),
+                                        )
+                                    ),
+                                    rx.table.body(
+                                        rx.foreach(
+                                            MonitoramentoState.preview_csv,
+                                            lambda linha: rx.table.row(
+                                                rx.table.cell(linha["nome"]),
+                                                rx.table.cell(rx.code(linha["ip"], size="1")),
+                                                rx.table.cell(linha["local"]),
+                                                rx.table.cell(
+                                                    rx.badge(linha["grupo"], variant="surface")
+                                                ),
+                                                rx.table.cell(
+                                                    rx.cond(
+                                                        linha["erro"] != "",
+                                                        rx.badge(linha["erro"], color_scheme="red", variant="soft"),
+                                                        rx.badge("OK", color_scheme="green", variant="soft"),
+                                                    )
+                                                ),
+                                            )
+                                        )
+                                    ),
+                                    variant="surface",
+                                    width="100%",
+                                ),
+                                type="scroll",
+                                style={"max_height": "35vh"},
+                            ),
+
+                            rx.hstack(
+                                rx.badge(
+                                    rx.icon("check", size=12),
+                                    f"{MonitoramentoState.preview_validos} válido(s)",
+                                    color_scheme="green",
+                                    variant="soft"
+                                ),
+                                rx.badge(
+                                    rx.icon("x", size=12),
+                                    f"{MonitoramentoState.preview_erros} com erro(s)",
+                                    color_scheme="red",
+                                    variant="soft"
+                                ),
+                                spacing="2",
+                            ),
+
+                            width="100%",
+                            spacing="2",
+                        ),
+                    ),
+
+                    # Botões de ação
+                    rx.hstack(
                         rx.alert_dialog.cancel(
                             rx.button(
                                 "Cancelar",
                                 color_scheme="gray",
-                                variant="soft"
+                                variant="soft",
+                                on_click=MonitoramentoState.limpar_preview_csv,
                             )
                         ),
+                        rx.cond(
+                            MonitoramentoState.preview_csv != [],
+                            rx.alert_dialog.action(
+                                rx.button(
+                                    rx.icon("check", size=16),
+                                    "Confirmar Importação",
+                                    color_scheme="green",
+                                    on_click=MonitoramentoState.confirmar_importacao_csv,
+                                    disabled=MonitoramentoState.preview_validos == 0,
+                                )
+                            ),
+                        ),
+                        spacing="3",
+                        justify="end",
+                        width="100%",
                     ),
+
                     width="100%",
-                    padding="4"
-                )
+                    spacing="3",
+                    padding="4",
+                ),
+
+                width="45%",
             )
         )
 
@@ -676,7 +786,7 @@ def configurações_ativos() -> rx.Component:
                 modal_importacao(),
 
                 rx.tooltip(
-                    rx.icon_button(rx.icon("upload"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
+                    rx.icon_button(rx.icon("download"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
                     content="Exportar CSV"
                 ),
 
@@ -916,7 +1026,16 @@ def index() -> rx.Component:
 
                 # Configurações de usuários
                 configurações_usuarios(),
-                    
+                
+                rx.tooltip(
+                    rx.icon_button(rx.icon("mail_warning"), color_scheme="gray", variant="soft"),
+                    content=rx.cond(
+                        AppState.monitorando,
+                        f"Próximo relátorio em: {AppState.proximo_relatorio // 60}:{AppState.proximo_relatorio % 60}",
+                        "App não está monitorando"
+                    )
+                ),
+
                 # Logoff
                 rx.tooltip(
                     rx.icon_button(rx.icon("door_open"), on_click=AuthState.fazer_logout, color_scheme="red", variant="surface"),

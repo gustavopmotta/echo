@@ -1,6 +1,7 @@
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv, set_key
 from sqlmodel import Field
 import os
@@ -13,6 +14,8 @@ import uuid
 import csv
 import io
 import ipaddress
+
+_ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_ping")
 
 # Criação do arquivo config.env se não existir
 if not os.path.exists("Echo/config.env"):
@@ -255,51 +258,95 @@ class AppState(rx.SharedState):
 
     @rx.event(background=True)
     async def loop_motor_central(self):
-        """Roda silenciosamente e avisa TODOS os navegadores ao mesmo tempo."""  
         async with self:
             await self.recarregar_configs_da_memoria()
             meu_ciclo = self.ciclo
 
-        rx.toast.info("Monitoramento iniciado.", position="top-right")
-        
         while True:
             async with self:
-                if not self.monitorando or self.ciclo != meu_ciclo: 
+                if not self.monitorando or self.ciclo != meu_ciclo:
                     break
-                ativos_atuais = self.ativos_live.copy()
-                intervalo = self.ram_intervalo
-                limite_ms = self.ram_limite_ms
-                max_pings = self.ram_max_pings
-                
-                ativos_atualizados = []
-                hora_atual = datetime.now().strftime("%H:%M:%S")
 
-            # Pings acontecem soltos para não travar a memória
-            for ativo in ativos_atuais:
-                resultado = await icmplib.async_ping(ativo.ip, count=1, timeout=2)
-                latencia_ms = resultado.avg_rtt
-                
-                novo_status = "Offline" if not resultado.is_alive else "Lento" if latencia_ms > limite_ms else "Online"
-                nova_latencia = latencia_ms if resultado.is_alive else 0.0
-                
-                novo_historico = ativo.historico.copy()
-                novo_historico.append({"hora": hora_atual, "latencia": nova_latencia})
-                if len(novo_historico) > max_pings:
-                    novo_historico = novo_historico[-max_pings:]
-                
-                ativos_atualizados.append(ativo.model_copy(update={
-                    "status": novo_status, "latencia": nova_latencia,
-                    "latencia_total": ativo.latencia_total + nova_latencia,
-                    "qnt_pings": ativo.qnt_pings + 1, "historico": novo_historico
-                }))
-            
-            # Bloqueia a sala rapidamente, atualiza a lista e o Reflex avisa todos os PCs!
+                ativos_snapshot = [
+                    {
+                        "nome":str(a.nome),
+                        "ip":str(a.ip),
+                        "local":str(a.local),
+                        "grupo":str(a.grupo),
+                        "cor_grupo":str(a.cor_grupo),
+                        "latencia_total":float(a.latencia_total),
+                        "qnt_pings":int(a.qnt_pings),
+                        "historico": [
+                            {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
+                            for h in list(a.historico)[-(self.ram_max_pings - 1):]
+                        ],
+                    }
+                    for a in self.ativos_live
+                ]
+                intervalo=int(self.ram_intervalo)
+                limite_ms=float(self.ram_limite_ms)
+                max_pings=int(self.ram_max_pings)
+
+            if not ativos_snapshot:
+                await asyncio.sleep(intervalo)
+                continue
+
+            hora_atual = datetime.now().strftime("%H:%M:%S")
+
+            def pingar_sync(ip: str) -> tuple[str, float]:
+                try:
+                    resultado = icmplib.ping(
+                        ip,
+                        count=1,
+                        timeout=2,
+                        privileged=False,
+                    )
+                    if resultado.is_alive:
+                        return "vivo", round(resultado.avg_rtt, 1)
+                    return "morto", 0.0
+                except Exception:
+                    return "morto", 0.0
+
+            loop = asyncio.get_event_loop()
+
+            # Usa o executor dedicado em vez do pool padrão
+            resultados = await asyncio.gather(*[
+                loop.run_in_executor(_ping_executor, pingar_sync, a["ip"])
+                for a in ativos_snapshot
+            ])
+
+            ativos_atualizados = []
+            for ativo, (estado, nova_latencia) in zip(ativos_snapshot, resultados):
+                novo_status = (
+                    "Offline" if estado == "morto"
+                    else "Lento" if nova_latencia > limite_ms
+                    else "Online"
+                )
+
+                # Histórico já vem truncado do snapshot, só adiciona o novo ponto
+                novo_historico = ativo["historico"] + [
+                    {"hora": hora_atual, "latencia": nova_latencia}
+                ]
+
+                ativos_atualizados.append(AtivoRede(
+                    nome=ativo["nome"],
+                    ip=ativo["ip"],
+                    local=ativo["local"],
+                    grupo=ativo["grupo"],
+                    cor_grupo=ativo["cor_grupo"],
+                    latencia=nova_latencia,
+                    latencia_total=ativo["latencia_total"] + nova_latencia,
+                    qnt_pings=ativo["qnt_pings"] + 1,
+                    status=novo_status,
+                    historico=novo_historico,
+                ))
+
             async with self:
-                if not self.monitorando or self.ciclo != meu_ciclo: 
+                if not self.monitorando or self.ciclo != meu_ciclo:
                     break
                 self.ativos_live = ativos_atualizados
-                
-            await asyncio.sleep(intervalo) 
+
+            await asyncio.sleep(intervalo)
     
     @rx.event(background=True)
     async def loop_relatorio(self):
@@ -637,6 +684,153 @@ class MonitoramentoState(rx.State):
     edit_local = ""
     edit_grupo = "GERAL"
 
+    preview_csv: list[dict[str, str]] = []
+    preview_total: int = 0
+    preview_validos: int = 0
+    preview_erros: int = 0
+    _arquivo_csv_buffer: list[AtivoDB] = []
+
+    @rx.event
+    async def carregar_preview_csv(self, arquivos: list[rx.UploadFile]):
+        """Lê o CSV, valida cada linha e monta a tabela de pré-visualização."""
+        if not arquivos:
+            return rx.toast.error("Nenhum arquivo foi enviado!", position="top-right")
+
+        arquivo = arquivos[0]
+        conteudo_bytes = await arquivo.read()
+        conteudo_texto = conteudo_bytes.decode("utf-8")
+
+        leitor_csv = csv.DictReader(io.StringIO(conteudo_texto))
+
+        preview = []
+        ativos_validos = []
+
+        with rx.session() as session:
+            grupos_existentes = {g.nome for g in session.exec(GrupoDB.select()).all()}
+            ips_existentes = {a.ip for a in session.exec(AtivoDB.select()).all()}
+
+        ips_no_csv = set()
+
+        for index, linha in enumerate(leitor_csv, start=1):
+            nome = linha.get("nome", "").strip()
+            ip = linha.get("ip", "").strip()
+            local = linha.get("local", "").strip()
+            grupo = linha.get("grupo", "GERAL").strip() or "GERAL"
+            erro = ""
+
+            if not nome or not ip:
+                erro = "Nome ou IP ausente"
+            else:
+                try:
+                    ipaddress.ip_address(ip)
+                except ValueError:
+                    erro = f"IP inválido"
+
+            if not erro and ip in ips_existentes:
+                erro = "IP já cadastrado"
+
+            if not erro and ip in ips_no_csv:
+                erro = "IP duplicado no CSV"
+
+            if not erro and grupo not in grupos_existentes:
+                grupo = "GERAL"
+
+            preview.append({
+                "nome": nome,
+                "ip": ip,
+                "local": local,
+                "grupo": grupo,
+                "erro": erro,
+            })
+
+            if not erro:
+                ips_no_csv.add(ip)
+                ativos_validos.append(
+                    AtivoDB(nome=nome, ip=ip, local=local, grupo=grupo, status="Aguardando...")
+                )
+
+        self.preview_csv = preview
+        self.preview_total = len(preview)
+        self.preview_validos = len(ativos_validos)
+        self.preview_erros = len(preview) - len(ativos_validos)
+        self._arquivo_csv_buffer = ativos_validos
+
+    @rx.event
+    async def confirmar_importacao_csv(self):
+        """Grava no banco apenas os ativos válidos do buffer e sincroniza o painel."""
+        if not self._arquivo_csv_buffer:
+            return rx.toast.warning("Nenhum ativo válido para importar.", position="top-right")
+
+        try:
+            with rx.session() as session:
+                for ativo in self._arquivo_csv_buffer:
+                    session.add(ativo)
+                session.commit()
+        except Exception as e:
+            return rx.toast.error(f"Erro ao salvar no banco: {e}", position="top-right")
+
+        total = len(self._arquivo_csv_buffer)
+        self.limpar_preview_csv()
+
+        sala = await self.get_state(AppState)
+        sala.buffer_iniciado = False
+        await sala.conectar_painel()
+
+        return rx.toast.success(f"{total} ativo(s) importado(s) com sucesso!", position="top-right")
+
+    @rx.event
+    def limpar_preview_csv(self):
+        """Reseta o estado de preview."""
+        self.preview_csv = []
+        self.preview_total = 0
+        self.preview_validos = 0
+        self.preview_erros = 0
+        self._arquivo_csv_buffer = []
+
+    @rx.event
+    def exportar_ativos_csv(self):
+        """Busca os dados no banco e gera um CSV para download."""
+        # 1. Puxa a fonte da verdade absoluta (O Banco de Dados)
+        with rx.session() as session:
+            ativos_db = session.exec(AtivoDB.select()).all()
+            
+        if not ativos_db:
+            return rx.toast.warning("Não há ativos cadastrados para exportar.", position="top-right")
+
+        # 2. Cria um arquivo de texto virtual na memória RAM
+        saida_csv = io.StringIO()
+        
+        # 3. Define o cabeçalho EXATAMENTE igual ao esperado na importação
+        campos = ["nome", "ip", "local", "grupo"]
+        escritor = csv.DictWriter(saida_csv, fieldnames=campos)
+        
+        escritor.writeheader()
+        
+        # 4. Preenche as linhas
+        for ativo in ativos_db:
+            escritor.writerow({
+                "nome": ativo.nome,
+                "ip": ativo.ip,
+                "local": ativo.local,
+                "grupo": ativo.grupo
+            })
+            
+        # 5. Extrai o texto final gerado
+        conteudo_csv = saida_csv.getvalue()
+        
+        # 6. Gera um nome de arquivo elegante com a data de hoje
+        data_atual = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        nome_arquivo = f"backup_ativos_{data_atual}.csv"
+        
+        # 7. Dispara o gatilho de download nativo do Reflex para o navegador
+        return [
+            rx.download(
+                data=conteudo_csv,
+                filename=nome_arquivo
+            ),
+            rx.toast.info("Download do backup iniciado!", position="top-right")
+        ]
+
     @rx.event
     def carregar_ativos(self):
         """Puxa os ativos da tabela do SQLite e prepara para os gráficos."""
@@ -826,119 +1020,6 @@ class MonitoramentoState(rx.State):
 
         await self.cancelar_edicao_ativo() # Fecha o modal
         return rx.toast.info("Alteração feita. Clique em 'Salvar' para aplicar no Banco!", position="top-right")
-
-    @rx.event
-    async def importar_ativos_csv(self, arquivos):
-        if not arquivos:
-            return rx.toast.error("Nenhum arquivo foi enviado!", position="top-right")
-            
-        arquivo = arquivos[0]
-        # Lê os bytes do arquivo enviado e decodifica para texto
-        conteudo_bytes = await arquivo.read()
-        conteudo_texto = conteudo_bytes.decode("utf-8")
-        
-        # Transforma o texto em um leitor de dicionário CSV
-        leitor_csv = csv.DictReader(io.StringIO(conteudo_texto))
-        
-        ativos_para_salvar = []
-        linhas_com_erro = []
-        
-        # Puxa os grupos existentes no banco para validar se o grupo do CSV existe
-        with rx.session() as session:
-            grupos_existentes = {g.nome for g in session.exec(GrupoDB.select()).all()}
-        
-        for index, linha in enumerate(leitor_csv, start=1):
-            nome = linha.get("nome", "").strip()
-            ip = linha.get("ip", "").strip()
-            local = linha.get("local", "").strip()
-            grupo = linha.get("grupo", "").strip()
-            
-            # Validação 1: Campos obrigatórios
-            if not nome or not ip:
-                linhas_com_erro.append(f"Linha {index}: Nome ou IP ausentes.")
-                continue
-                
-            # Validação 2: Verificar se o IP é semanticamente válido
-            try:
-                ipaddress.ip_address(ip)
-            except ValueError:
-                linhas_com_erro.append(f"Linha {index}: O IP '{ip}' é inválido.")
-                continue
-                
-            # Validação 3: Se o grupo não existir no banco, joga para o padrão ou cria um alerta
-            if grupo and grupo not in grupos_existentes:
-                grupo = "GERAL" # Grupo padrão de escape
-                
-            ativos_para_salvar.append(
-                AtivoDB(nome=nome, ip=ip, local=local, grupo=grupo)
-            )
-            
-        # Gravação no Banco de Dados
-        if ativos_para_salvar:
-            with rx.session() as session:
-                for ativo in ativos_para_salvar:
-                    session.add(ativo)
-                session.commit()
-                
-        # 3. O PULO DO GATO: Sincroniza e redesenha a TV Global imediatamente!
-        # Força o painel central a reler o banco de dados e atualizar os cards na tela de todo mundo
-        sala = await self.get_state(AppState)
-        sala.buffer_iniciado = False # Força a recarga total do banco na inicialização
-        await sala.conectar_painel() 
-        
-        # Retornos visuais para o usuário
-        if linhas_com_erro:
-            # Se houver erros parciais, avisa quais linhas falharam
-            return [
-                rx.toast.success(f"{len(ativos_para_salvar)} ativos importados!", position="top-right"),
-                rx.toast.warning(f"Falha em {len(linhas_com_erro)} linhas. Verifique o console.", position="top-right")
-            ]
-            
-        return rx.toast.success("Todos os ativos foram importados com sucesso!", position="top-right")
-
-    @rx.event
-    def exportar_ativos_csv(self):
-        """Busca os dados no banco e gera um CSV para download."""
-        # 1. Puxa a fonte da verdade absoluta (O Banco de Dados)
-        with rx.session() as session:
-            ativos_db = session.exec(AtivoDB.select()).all()
-            
-        if not ativos_db:
-            return rx.toast.warning("Não há ativos cadastrados para exportar.", position="top-right")
-
-        # 2. Cria um arquivo de texto virtual na memória RAM
-        saida_csv = io.StringIO()
-        
-        # 3. Define o cabeçalho EXATAMENTE igual ao esperado na importação
-        campos = ["nome", "ip", "local", "grupo"]
-        escritor = csv.DictWriter(saida_csv, fieldnames=campos)
-        
-        escritor.writeheader()
-        
-        # 4. Preenche as linhas
-        for ativo in ativos_db:
-            escritor.writerow({
-                "nome": ativo.nome,
-                "ip": ativo.ip,
-                "local": ativo.local,
-                "grupo": ativo.grupo
-            })
-            
-        # 5. Extrai o texto final gerado
-        conteudo_csv = saida_csv.getvalue()
-        
-        # 6. Gera um nome de arquivo elegante com a data de hoje
-        data_atual = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        nome_arquivo = f"backup_ativos_{data_atual}.csv"
-        
-        # 7. Dispara o gatilho de download nativo do Reflex para o navegador
-        return [
-            rx.download(
-                data=conteudo_csv,
-                filename=nome_arquivo
-            ),
-            rx.toast.info("Download do backup iniciado!", position="top-right")
-        ]
 
     @rx.event
     async def dar_ignicao_global(self):
