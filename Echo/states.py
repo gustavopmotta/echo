@@ -15,15 +15,16 @@ import csv
 import io
 import ipaddress
 
+_config_path = "config.env"
 _ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_ping")
 
 # Criação do arquivo config.env se não existir
-if not os.path.exists("Echo/config.env"):
+if not os.path.exists(_config_path):
     print("Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
-    with open("Echo/config.env", "w", encoding="utf-8") as f:
+    with open(_config_path, "w", encoding="utf-8") as f:
         f.write("# Configurações de email\nSMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=suasenha\n# Configurações de monitoramento\nINTERVALO_SEGUNDOS=10\nLIMITE_LATENCIA_MS=100\nPINGS_MAXIMOS=12\nFREQUENCIA_EMAILS=60")
 
-load_dotenv("Echo/config.env", override=True)
+load_dotenv(_config_path, override=True)
 
 class User(rx.Model, table=True):
     """Tabela para armazenar os usuários no banco de dados SQLite."""
@@ -40,9 +41,12 @@ class AtivoRede(rx.Model):
     local: str
     grupo: str = "GERAL"
     cor_grupo: str = "gray"
+    ininterrupto: bool = False
     latencia: float = 0.0
     latencia_total: float = 0.0
     qnt_pings: int = 0
+    pings_offline: int = 0
+    alerta_enviado: bool = False
     status: str = "Aguardando..."
     historico: list[dict[str, str | float]] = []
 
@@ -57,18 +61,19 @@ class AtivoDB(rx.Model, table=True):
 class GrupoDB(rx.Model, table=True):
     """Tabela para armazenar grupos no banco de dados SQLite."""
     nome: str = Field(index=True, unique=True)
+    ininterrupto: bool = False
     cor: str = "gray" # Cor padrão, pode ser personalizada
 
-def disparar_relatorio(ativos: list[AtivoRede], destinatarios):
+def disparar_relatorio(ativos: list[AtivoRede]):
     # Travas de segurança: não tenta enviar se faltar dados
-    if not destinatarios:
+    if not carregar_emails():
         print("Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
         return
     if not ativos:
         print("Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
         return
 
-    load_dotenv("Echo/config.env", override=True)
+    load_dotenv(_config_path, override=True)
 
     # Puxa as configurações do .env (já carregadas no topo do seu código)
     servidor = os.environ.get("SMTP_SERVER")
@@ -123,7 +128,7 @@ def disparar_relatorio(ativos: list[AtivoRede], destinatarios):
     msg = MIMEMultipart()
     msg['Subject'] = "Echo: Status Atual da Rede (Teste de Latência)"
     msg['From'] = login
-    msg['To'] = ", ".join(destinatarios)
+    msg['To'] = ", ".join(carregar_emails())
     msg.attach(MIMEText(corpo_html, 'html'))
 
     # 4. Conecta no servidor e faz o disparo
@@ -131,17 +136,74 @@ def disparar_relatorio(ativos: list[AtivoRede], destinatarios):
         print(f"Conectando ao servidor SMTP {servidor} via SSL...")
         server = smtplib.SMTP_SSL(servidor, porta)
         server.login(login, senha)
-        server.sendmail(login, destinatarios, msg.as_string())
+        server.sendmail(login, carregar_emails(), msg.as_string())
         server.quit()
         
         print("E-mail de teste enviado e entregue com sucesso!")
     except Exception as e:
         print(f"Falha crítica ao enviar o e-mail: {e}")
 
-def carregar_ativos():
-    with rx.session() as session:
-        registros = session.exec(AtivoDB.select()).all()
-        return [AtivoRede(nome=a.nome, ip=a.ip, local=a.local, status=a.status) for a in registros]
+def disparar_alerta_offline(ativos_criticos: list[AtivoRede]):
+    if not ativos_criticos:
+        return
+
+    load_dotenv(_config_path, override=True)
+    servidor=os.environ.get("SMTP_SERVER")
+    porta=int(os.environ.get("SMTP_PORT", 465))
+    login=os.environ.get("SMTP_LOGIN")
+    senha=os.environ.get("SMTP_PASSWORD")
+
+    linhas_tabela = ""
+    for ativo in ativos_criticos:
+        linhas_tabela += f"""
+        <tr>
+            <td style="padding:10px;border-bottom:1px solid #eee;"><b>{ativo.nome}</b></td>
+            <td style="padding:10px;border-bottom:1px solid #eee;">{ativo.ip}</td>
+            <td style="padding:10px;border-bottom:1px solid #eee;">{ativo.local}</td>
+            <td style="padding:10px;border-bottom:1px solid #eee;">{ativo.grupo}</td>
+            <td style="padding:10px;border-bottom:1px solid #eee;color:red;font-weight:bold;">
+                Offline ({ativo.pings_offline} pings)
+            </td>
+        </tr>
+        """
+
+    corpo_html = f"""
+    <html>
+        <body style="font-family:Arial,sans-serif;color:#333;line-height:1.6;">
+            <h2 style="color:#cc0000;">⚠️ Echo — Alerta de Ativos Offline</h2>
+            <p>Os seguintes ativos de grupos críticos (24/7) estão offline:</p>
+            <table style="border-collapse:collapse;width:100%;max-width:800px;margin-top:20px;
+                          text-align:left;box-shadow:0 2px 5px rgba(0,0,0,0.1);">
+                <tr style="background-color:#f4f6f8;">
+                    <th style="padding:12px;border-bottom:2px solid #ccc;">Equipamento</th>
+                    <th style="padding:12px;border-bottom:2px solid #ccc;">IP</th>
+                    <th style="padding:12px;border-bottom:2px solid #ccc;">Localização</th>
+                    <th style="padding:12px;border-bottom:2px solid #ccc;">Grupo</th>
+                    <th style="padding:12px;border-bottom:2px solid #ccc;">Status</th>
+                </tr>
+                {linhas_tabela}
+            </table>
+            <p style="margin-top:30px;font-size:12px;color:#777;">
+                Alerta gerado automaticamente pelo painel Echo.
+            </p>
+        </body>
+    </html>
+    """
+
+    msg = MIMEMultipart()
+    msg['Subject']=f"⚠️ Echo: {len(ativos_criticos)} ativo(s) offline em grupos críticos"
+    msg['From']=login
+    msg['To']=", ".join(carregar_emails())
+    msg.attach(MIMEText(corpo_html, 'html'))
+
+    try:
+        server = smtplib.SMTP_SSL(servidor, porta)
+        server.login(login, senha)
+        server.sendmail(login, carregar_emails(), msg.as_string())
+        server.quit()
+        print(f"[ALERTA] E-mail de offline disparado para {len(ativos_criticos)} ativo(s).")
+    except Exception as e:
+        print(f"[ALERTA] Falha ao enviar e-mail de alerta: {e}")
 
 def carregar_emails():
     with rx.session() as session:
@@ -174,22 +236,18 @@ class AppState(rx.SharedState):
 
     @rx.var
     def ativos_agrupados(self) -> dict[str, list[AtivoRede]]:
-        """Pega a lista reta de ativos e agrupa em um Dicionário por Grupo."""
         grupos = {}
         for ativo in self.ativos_live:
-            nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
-            
+            nome_grupo = getattr(ativo, "grupo", None) or "GERAL"
             if nome_grupo not in grupos:
                 grupos[nome_grupo] = []
-                
             grupos[nome_grupo].append(ativo)
-            
         return grupos
 
     @rx.event
     async def recarregar_configs_da_memoria(self):
         """O Gatilho: Puxa o .env atualizado e injeta na RAM para os loops usarem."""
-        load_dotenv("Echo/config.env", override=True)
+        load_dotenv(_config_path, override=True)
         self.ram_intervalo = int(os.environ.get("INTERVALO_SEGUNDOS", 10))
         self.ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
         self.ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
@@ -208,6 +266,7 @@ class AppState(rx.SharedState):
                 # Carrega o mapa de cores dos grupos
                 grupos_db = session.exec(GrupoDB.select()).all()
                 mapa_cores = {g.nome: g.cor for g in grupos_db}
+                mapa_ininterrupto = {g.nome: g.ininterrupto for g in grupos_db}
                 
                 # Carrega os ativos salvos no HD
                 registros = session.exec(AtivoDB.select()).all()
@@ -232,6 +291,7 @@ class AppState(rx.SharedState):
                             local=a.local,
                             grupo=a.grupo, 
                             cor_grupo=mapa_cores.get(a.grupo, "gray"),
+                            ininterrupto=mapa_ininterrupto.get(a.grupo, False),
                             status="Aguardando...", 
                             latencia=0.0,
                             latencia_total=0.0, 
@@ -261,92 +321,147 @@ class AppState(rx.SharedState):
         async with self:
             await self.recarregar_configs_da_memoria()
             meu_ciclo = self.ciclo
-
+    
+        loop = asyncio.get_running_loop()
+    
         while True:
-            async with self:
-                if not self.monitorando or self.ciclo != meu_ciclo:
-                    break
+            try:
+                async with self:
+                    if not self.monitorando or self.ciclo != meu_ciclo:
+                        break
+                    
+                    ativos_snapshot = [
+                        {
+                            "nome": str(a.nome),
+                            "ip": str(a.ip),
+                            "local": str(a.local),
+                            "grupo": str(a.grupo),
+                            "cor_grupo": str(a.cor_grupo),
+                            "ininterrupto": bool(a.ininterrupto),
+                            "latencia_total": float(a.latencia_total),
+                            "qnt_pings": int(a.qnt_pings),
+                            "pings_offline": int(a.pings_offline),
+                            "alerta_enviado": bool(a.alerta_enviado),
+                            "historico":[
+                                {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
+                                for h in list(a.historico)[-(self.ram_max_pings - 1):]
+                            ],
+                        }
+                        for a in self.ativos_live
+                    ]
+                    intervalo = int(self.ram_intervalo)
+                    limite_ms = float(self.ram_limite_ms)
+                    max_pings = int(self.ram_max_pings)
+    
+                if not ativos_snapshot:
+                    await asyncio.sleep(intervalo)
+                    continue
+                
+                hora_atual = datetime.now().strftime("%H:%M:%S")
+    
+                def pingar_sync(ip: str) -> tuple[str, float]:
+                    try:
+                        resultado = icmplib.ping(
+                            ip,
+                            count=1,
+                            timeout=2,
+                            privileged=False,
+                        )
+                        if resultado.is_alive:
+                            return "vivo", round(resultado.avg_rtt, 1)
+                        return "morto", 0.0
+                    except Exception as e:
+                        print(f"[PING] Erro ao pingar {ip}: {e}")
+                        return "morto", 0.0
+    
+                resultados = await asyncio.gather(*[
+                    loop.run_in_executor(_ping_executor, pingar_sync, a["ip"])
+                    for a in ativos_snapshot
+                ])
+    
+                ativos_atualizados = []
+                disparar_alerta = False
 
-                ativos_snapshot = [
-                    {
-                        "nome":str(a.nome),
-                        "ip":str(a.ip),
-                        "local":str(a.local),
-                        "grupo":str(a.grupo),
-                        "cor_grupo":str(a.cor_grupo),
-                        "latencia_total":float(a.latencia_total),
-                        "qnt_pings":int(a.qnt_pings),
-                        "historico": [
-                            {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
-                            for h in list(a.historico)[-(self.ram_max_pings - 1):]
-                        ],
-                    }
-                    for a in self.ativos_live
-                ]
-                intervalo=int(self.ram_intervalo)
-                limite_ms=float(self.ram_limite_ms)
-                max_pings=int(self.ram_max_pings)
-
-            if not ativos_snapshot:
-                await asyncio.sleep(intervalo)
-                continue
-
-            hora_atual = datetime.now().strftime("%H:%M:%S")
-
-            def pingar_sync(ip: str) -> tuple[str, float]:
-                try:
-                    resultado = icmplib.ping(
-                        ip,
-                        count=1,
-                        timeout=2,
-                        privileged=False,
+                for ativo, (estado, nova_latencia) in zip(ativos_snapshot, resultados):
+                    novo_status = (
+                        "Offline" if estado == "morto"
+                        else "Lento" if nova_latencia > limite_ms
+                        else "Online"
                     )
-                    if resultado.is_alive:
-                        return "vivo", round(resultado.avg_rtt, 1)
-                    return "morto", 0.0
-                except Exception:
-                    return "morto", 0.0
 
-            loop = asyncio.get_event_loop()
+                    # Atualiza contador de pings offline consecutivos
+                    if novo_status == "Offline":
+                        novo_pings_offline = ativo["pings_offline"] + 1
+                    else:
+                        novo_pings_offline = 0
 
-            # Usa o executor dedicado em vez do pool padrão
-            resultados = await asyncio.gather(*[
-                loop.run_in_executor(_ping_executor, pingar_sync, a["ip"])
-                for a in ativos_snapshot
-            ])
+                    # Reseta o alerta quando o ativo voltar online
+                    novo_alerta_enviado = ativo["alerta_enviado"]
+                    if novo_status != "Offline":
+                        novo_alerta_enviado = False
 
-            ativos_atualizados = []
-            for ativo, (estado, nova_latencia) in zip(ativos_snapshot, resultados):
-                novo_status = (
-                    "Offline" if estado == "morto"
-                    else "Lento" if nova_latencia > limite_ms
-                    else "Online"
-                )
+                    # Marca para disparar alerta se ativo ininterrupto atingiu 5 pings offline
+                    if (
+                        ativo["ininterrupto"]
+                        and novo_pings_offline >= 5
+                        and not novo_alerta_enviado
+                    ):
+                        disparar_alerta = True
 
-                # Histórico já vem truncado do snapshot, só adiciona o novo ponto
-                novo_historico = ativo["historico"] + [
-                    {"hora": hora_atual, "latencia": nova_latencia}
-                ]
+                    novo_historico = ativo["historico"] + [
+                        {"hora": hora_atual, "latencia": nova_latencia}
+                    ]
 
-                ativos_atualizados.append(AtivoRede(
-                    nome=ativo["nome"],
-                    ip=ativo["ip"],
-                    local=ativo["local"],
-                    grupo=ativo["grupo"],
-                    cor_grupo=ativo["cor_grupo"],
-                    latencia=nova_latencia,
-                    latencia_total=ativo["latencia_total"] + nova_latencia,
-                    qnt_pings=ativo["qnt_pings"] + 1,
-                    status=novo_status,
-                    historico=novo_historico,
-                ))
+                    ativos_atualizados.append(AtivoRede(
+                        nome=ativo["nome"],
+                        ip=ativo["ip"],
+                        local=ativo["local"],
+                        grupo=ativo["grupo"],
+                        cor_grupo=ativo["cor_grupo"],
+                        ininterrupto=ativo["ininterrupto"],
+                        latencia=nova_latencia,
+                        latencia_total=ativo["latencia_total"] + nova_latencia,
+                        qnt_pings=ativo["qnt_pings"] + 1,
+                        pings_offline=novo_pings_offline,
+                        alerta_enviado=novo_alerta_enviado,
+                        status=novo_status,
+                        historico=novo_historico,
+                    ))
 
-            async with self:
-                if not self.monitorando or self.ciclo != meu_ciclo:
-                    break
-                self.ativos_live = ativos_atualizados
+                # Dispara alerta e marca os ativos para não repetir
+                if disparar_alerta:
+                    ativos_criticos = [
+                        a for a in ativos_atualizados
+                        if a.ininterrupto and a.pings_offline >= 3
+                    ]
+                    if ativos_criticos:
+                        # Marca alerta_enviado para não repetir no próximo ciclo
+                        for a in ativos_atualizados:
+                            if a.ininterrupto and a.pings_offline >= 5:
+                                a.alerta_enviado = True
 
-            await asyncio.sleep(intervalo)
+                        loop.run_in_executor(
+                            _ping_executor,
+                            disparar_alerta_offline,
+                            ativos_criticos.copy()
+                        )
+    
+                async with self:
+                    if not self.monitorando or self.ciclo != meu_ciclo:
+                        break
+                    self.ativos_live = ativos_atualizados
+    
+                await asyncio.sleep(intervalo)
+    
+            except asyncio.CancelledError:
+                # O Reflex cancelou o task intencionalmente — encerra limpo
+                print("[MOTOR] Task cancelada pelo Reflex. Encerrando loop.")
+                break
+            except Exception as e:
+                # Qualquer outro erro: loga e continua na próxima iteração
+                print(f"[MOTOR] Erro inesperado no ciclo de monitoramento: {e}")
+                await asyncio.sleep(5)  # Pausa curta antes de tentar de novo
+                continue
     
     @rx.event(background=True)
     async def loop_relatorio(self):
@@ -397,6 +512,8 @@ class AuthState(rx.State):
     setup_password: str = ""
     setup_confirmacao: str = ""
 
+    tentando_login: bool = False
+
     @rx.event
     def tentar_login(self):
         with rx.session() as session:
@@ -404,6 +521,9 @@ class AuthState(rx.State):
             user = session.exec(
                 User.select().where(User.email == self.email_input.lower().strip())
             ).first()
+
+            self.tentando_login = True
+            print(self.tentando_login)
 
             if user:    
                 # Verifica a senha usando o Hash Bcrypt
@@ -427,13 +547,17 @@ class AuthState(rx.State):
                     self.senha_input = ""
 
                     print(f"Token local: {self.token_logado} | Token banco: {user.session_token}")
-
-                    yield rx.redirect("/")
+                    
+                    self.tentando_login = False
+                    print(self.tentando_login)
+                    yield rx.redirect("/")          
                     return
 
             # Se falhar (utilizador não existe ou senha errada)
             yield rx.toast.error("Usuário ou senha incorretos.", position="top-right")
             self.senha_input = ""
+            self.tentando_login = False
+            print(self.tentando_login)
 
     @rx.event
     def fazer_logout(self):
@@ -539,6 +663,7 @@ class ConfigState(rx.State):
     grupos: list[dict[str, str]] = []
     novo_grupo_input: str = ""
     novo_grupo_cor_input: str = "gray"
+    novo_grupo_ininterrupto_input: bool = False
     filtro_grupo_atual: str = "Todos"
     cor_grupo_atual: str = "gray"
 
@@ -585,24 +710,21 @@ class ConfigState(rx.State):
 
     @rx.event
     async def salvar_configs_env(self):
-        """Salva as alterações do buffer fisicamente no arquivo .env."""
-        sala = await self.get_state(AppState)
-        
-        caminho_env = "Echo/config.env"
+        """Salva as alterações do buffer fisicamente no arquivo .env."""      
         
         # Garante que o arquivo exista
-        if not os.path.exists(caminho_env):
-            open(caminho_env, 'w').close()
+        if not os.path.exists(_config_path):
+            open(_config_path, 'w').close()
             
         # O set_key pede Strings, então convertemos tudo para str() ao salvar
-        set_key(caminho_env, "SMTP_SERVER", str(self.config_buffer["smtp_server"]))
-        set_key(caminho_env, "SMTP_PORT", str(self.config_buffer["smtp_port"]))
-        set_key(caminho_env, "SMTP_LOGIN", str(self.config_buffer["smtp_login"]))
-        set_key(caminho_env, "SMTP_PASSWORD", str(self.config_buffer["smtp_password"]))
-        set_key(caminho_env, "INTERVALO_SEGUNDOS", str(self.config_buffer["intervalo_segundos"]))
-        set_key(caminho_env, "LIMITE_LATENCIA_MS", str(self.config_buffer["limite_latencia_ms"]))
-        set_key(caminho_env, "PINGS_MAXIMOS", str(self.config_buffer["pings_maximos"]))
-        set_key(caminho_env, "FREQUENCIA_EMAILS", str(self.config_buffer["frequencia_emails"]))
+        set_key(_config_path, "SMTP_SERVER", str(self.config_buffer["smtp_server"]))
+        set_key(_config_path, "SMTP_PORT", str(self.config_buffer["smtp_port"]))
+        set_key(_config_path, "SMTP_LOGIN", str(self.config_buffer["smtp_login"]))
+        set_key(_config_path, "SMTP_PASSWORD", str(self.config_buffer["smtp_password"]))
+        set_key(_config_path, "INTERVALO_SEGUNDOS", str(self.config_buffer["intervalo_segundos"]))
+        set_key(_config_path, "LIMITE_LATENCIA_MS", str(self.config_buffer["limite_latencia_ms"]))
+        set_key(_config_path, "PINGS_MAXIMOS", str(self.config_buffer["pings_maximos"]))
+        set_key(_config_path, "FREQUENCIA_EMAILS", str(self.config_buffer["frequencia_emails"]))
 
         # Atualiza a tela privada do usuário que acabou de clicar
         self.config = self.config_buffer.copy()
@@ -621,18 +743,19 @@ class ConfigState(rx.State):
             
             # Se não existir (ex: primeira vez rodando o app), ele cria na hora!
             if not grupo_padrao:
-                novo_padrao = GrupoDB(nome="GERAL", cor="gray")
+                novo_padrao = GrupoDB(nome="GERAL", cor="gray", ininterrupto=False)
                 session.add(novo_padrao)
                 session.commit()
 
             registros = session.exec(GrupoDB.select()).all()
-            self.grupos = [{"nome": s.nome, "cor": s.cor} for s in registros]
+            self.grupos = [{"nome": s.nome, "cor": s.cor, "ininterrupto": s.ininterrupto} for s in registros]
 
     @rx.event
     def adicionar_grupo(self):
         grupo_limpo = self.novo_grupo_input.strip().upper() # Padroniza tudo em maiúsculo (ex: TI, GALPÃO)
         cor_limpa = self.novo_grupo_cor_input.strip()
-        
+        ininterrupto = self.novo_grupo_ininterrupto_input
+
         if not grupo_limpo: 
             return rx.toast.warning("O nome do grupo é obrigatório.", position="top-right")
         
@@ -640,12 +763,13 @@ class ConfigState(rx.State):
             registro = session.exec(GrupoDB.select().where(GrupoDB.nome == grupo_limpo)).first()
 
             if not registro:
-                novo = GrupoDB(nome=grupo_limpo, cor=cor_limpa)
+                novo = GrupoDB(nome=grupo_limpo, cor=cor_limpa, ininterrupto=ininterrupto)
                 session.add(novo)
                 session.commit()
 
                 self.novo_grupo_input = ""
                 self.novo_grupo_cor_input = "gray"
+                self.novo_grupo_ininterrupto_input = False
                 self.carregar_grupos()
 
                 return rx.toast.success(f"Grupo '{grupo_limpo}' adicionado!", position="top-right")
@@ -720,11 +844,6 @@ class MonitoramentoState(rx.State):
 
             if not nome or not ip:
                 erro = "Nome ou IP ausente"
-            else:
-                try:
-                    ipaddress.ip_address(ip)
-                except ValueError:
-                    erro = f"IP inválido"
 
             if not erro and ip in ips_existentes:
                 erro = "IP já cadastrado"
@@ -833,25 +952,29 @@ class MonitoramentoState(rx.State):
 
     @rx.event
     def carregar_ativos(self):
-        """Puxa os ativos da tabela do SQLite e prepara para os gráficos."""
         with rx.session() as session:
             grupos_db = session.exec(GrupoDB.select()).all()
             mapa_cores = {g.nome: g.cor for g in grupos_db}
+            mapa_ininterrupto = {g.nome: g.ininterrupto for g in grupos_db}
 
             registros = session.exec(AtivoDB.select()).all()
             self.ativos = [
                 AtivoRede(
-                    nome=a.nome, 
-                    ip=a.ip, 
-                    local=a.local, 
-                    grupo=a.grupo, 
+                    nome=a.nome,
+                    ip=a.ip,
+                    local=a.local,
+                    grupo=a.grupo,
                     cor_grupo=mapa_cores.get(a.grupo, "gray"),
-                    status=a.status, 
-                    latencia=0.0, 
-                    latencia_total=0.0, 
-                    qnt_pings=0, 
-                    historico=[]
-                ) for a in registros
+                    ininterrupto=mapa_ininterrupto.get(a.grupo, False),
+                    status="Aguardando...",
+                    latencia=0.0,
+                    latencia_total=0.0,
+                    qnt_pings=0,
+                    pings_offline=0,
+                    alerta_enviado=False,
+                    historico=[],
+                )
+                for a in registros
             ]
 
     @rx.event

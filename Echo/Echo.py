@@ -97,46 +97,49 @@ def renderizar_bloco_grupo(dados_do_grupo):
 # --- TELA DE LOGIN ---
 def tela_login() -> rx.Component:
     return rx.center(
-        rx.card(
-            rx.vstack(
-                rx.heading("Bem-vindo ao Echo!", size="7"),
-                rx.text("Faça login com sua conta", size="3", text_align="center", color="gray", margin_bottom="1em"),
-
+        rx.form(
+            rx.card(
                 rx.vstack(
-                    rx.text("Email", size="3", weight="medium", width="100%", text_align="left"),
-                    rx.input(
-                        rx.input.slot(rx.icon("user")),
-                        placeholder="usuário@echo.com", 
-                        on_change=AuthState.set_email_input,
-                        value=AuthState.email_input,
-                        width="100%",
-                        size="3"
-                    ),
-                    width="100%",
-                    justify="start",
-                    spacing="1"
-                ),
+                    rx.heading("Bem-vindo ao Echo!", size="7"),
+                    rx.text("Faça login com sua conta", size="3", text_align="center", color="gray", margin_bottom="1em"),
 
-                rx.vstack(
-                    rx.text("Senha", size="3", weight="medium", width="100%", text_align="left"),
-                    rx.input(
-                        rx.input.slot(rx.icon("lock")),
-                        type="password", 
-                        placeholder="**********",
-                        on_change=AuthState.set_senha_input,
-                        value=AuthState.senha_input,
+                    rx.vstack(
+                        rx.text("Email", size="3", weight="medium", width="100%", text_align="left"),
+                        rx.input(
+                            rx.input.slot(rx.icon("user")),
+                            placeholder="usuário@echo.com", 
+                            on_change=AuthState.set_email_input,
+                            value=AuthState.email_input,
+                            width="100%",
+                            size="3"
+                        ),
                         width="100%",
-                        size="3"
+                        justify="start",
+                        spacing="1"
                     ),
-                    width="100%",
-                    justify="start",
-                    spacing="1"
-                ),
-                rx.button("Fazer Login", on_click=AuthState.tentar_login, width="100%", color_scheme="blue", size="3", weight="bold"),
 
-                align_items="center",
-                spacing="3",
-                width="100%"
+                    rx.vstack(
+                        rx.text("Senha", size="3", weight="medium", width="100%", text_align="left"),
+                        rx.input(
+                            rx.input.slot(rx.icon("lock")),
+                            type="password", 
+                            placeholder="**********",
+                            on_change=AuthState.set_senha_input,
+                            value=AuthState.senha_input,
+                            width="100%",
+                            size="3"
+                        ),
+                        width="100%",
+                        justify="start",
+                        spacing="1"
+                    ),
+                    rx.button("Fazer Login", on_click=AuthState.tentar_login, width="100%", color_scheme="blue", size="3", weight="bold", type="submit", loading=AuthState.tentando_login),
+
+                    align_items="center",
+                    spacing="3",
+                    width="100%"
+                ),
+                padding="2em",
             ),
             size="4",
             width="100%",
@@ -189,7 +192,7 @@ def tela_setup_inicial() -> rx.Component:
                         auto_complete=False
                     ),
 
-                    rx.button("Criar Administrador", on_click=AuthState.registrar_primeiro_admin, width="100%", color_scheme="purple", size="3", weight="bold", type="submit"),
+                    rx.button("Criar Administrador", on_click=AuthState.registrar_primeiro_admin, width="100%", color_scheme="purple", size="3", weight="bold", type="submit", loading=AuthState.tentando_login),
 
                     align_items="center",
                     spacing="4"
@@ -217,7 +220,6 @@ def configurações_gerais() -> rx.Component:
             
 
             rx.scroll_area(
-                rx.callout("O sistema reiniciará ao salvar alterações", icon="info", color_scheme="blue",   variant="surface"),
                 rx.vstack(
                     # SEÇÃO 1: SERVIDOR DE E-MAIL
                     rx.text("Servidor de E-mail (SMTP)", weight="bold", padding_top="0.5em"),
@@ -450,7 +452,14 @@ def configurações_ativos() -> rx.Component:
                             ConfigState.grupos, 
                             lambda g: rx.card(
                                 rx.hstack(
-                                    rx.text(g["nome"], width="100%"),
+                                    rx.hstack(
+                                        rx.text(g["nome"]),
+                                        rx.cond(g["ininterrupto"], rx.tooltip(rx.badge("24/7", color_scheme="blue", variant="surface", align_items="center"), content="Este grupo é ininterrupto")),
+                                        width="100%",
+                                        align_items="center",
+                                        spacing="1"
+                                    ),
+                                    
                                     rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_grupo(g["nome"]), color_scheme="red", variant="ghost"),
                                     width="100%",
                                     align_items="center",
@@ -469,36 +478,54 @@ def configurações_ativos() -> rx.Component:
 
                 rx.divider(margin_y="1em"),
 
-                rx.hstack(
-                    rx.input(
-                        rx.input.slot(rx.icon("tag")),
-                        type="text",
-                        placeholder="Novo Grupo",
-                        value=ConfigState.novo_grupo_input,
-                        on_change=ConfigState.set_novo_grupo_input,
-                        flex="1",
-                    ),
+                
+                rx.card(
+                    rx.vstack(
+                        rx.hstack(
+                            rx.input(
+                                rx.input.slot(rx.icon("tag")),
+                                type="text",
+                                placeholder="Novo Grupo",
+                                value=ConfigState.novo_grupo_input,
+                                on_change=ConfigState.set_novo_grupo_input,
+                                flex="1",
+                            ),
 
-                    rx.select.root(
-                        rx.select.trigger(placeholder="Cor destaque"),
-                        rx.select.content(
-                            rx.foreach(
-                                    radix_colors, 
-                                    lambda cor: 
-                                    rx.select.item(rx.badge(cor.capitalize(), color_scheme=cor), value=cor)
+                            rx.select.root(
+                                rx.select.trigger(placeholder="Cor destaque"),
+                                rx.select.content(
+                                    rx.foreach(
+                                            radix_colors, 
+                                            lambda cor: 
+                                            rx.select.item(rx.badge(cor.capitalize(), color_scheme=cor), value=cor)
+                                        ),
                                 ),
+                                default_value=ConfigState.novo_grupo_cor_input,
+                                on_change=ConfigState.set_novo_grupo_cor_input
+                            ),
+
+                            spacing="1",
                         ),
-                        default_value=ConfigState.novo_grupo_cor_input,
-                        on_change=ConfigState.set_novo_grupo_cor_input
-                    ),
 
-                    rx.icon_button(rx.icon("plus"), on_click=ConfigState.adicionar_grupo, color_scheme="green"),
+                        rx.tooltip(
+                            rx.checkbox(
+                                "Grupo ininterrupto",
+                                checked=ConfigState.novo_grupo_ininterrupto_input,
+                                on_change=ConfigState.set_novo_grupo_ininterrupto_input
+                            ),
+                            content="Ativo que sempre deve estar ligado. O sistema enviará alertas mais frequentes se um ativo ininterrupto ficar offline.",
+                        ),
 
-                    spacing="1",
-                ),
+                        rx.hstack(
+                            rx.button(rx.icon("plus"), "Adicionar", on_click=ConfigState.adicionar_grupo, color_scheme="green", flex="1"),
 
-                rx.alert_dialog.cancel(
-                    rx.button("Sair", variant="soft", color_scheme="gray", width="100%", margin_top="1em")
+                            rx.alert_dialog.cancel(
+                                rx.button("Sair", variant="soft", color_scheme="gray", width="100%", flex="1")
+                            ),
+                            spacing="1",
+                            width="100%"
+                        )                
+                    )
                 ),
 
                 width="25%",
