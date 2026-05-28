@@ -495,7 +495,7 @@ class AppState(rx.SharedState):
                     break
             
             # 5. Dispara o e-mail
-            disparar_relatorio(self.ativos_live.copy(), carregar_emails())
+            disparar_relatorio(self.ativos_live.copy())
 
 # 2. ESTADO DE AUTENTICAÇÃO
 class AuthState(rx.State):
