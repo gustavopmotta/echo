@@ -228,6 +228,8 @@ class AppState(rx.SharedState):
     buffer_iniciado: bool = False
 
     proximo_relatorio: int = 0
+    relatorio_min: str = f"{proximo_relatorio // 60:02d}"
+    relatorio_seg: str = f"{proximo_relatorio % 60:02d}"
 
     ram_intervalo: int = 10
     ram_limite_ms: int = 100
@@ -485,6 +487,8 @@ class AppState(rx.SharedState):
                 async with self:
                     # Se o sistema foi pausado ou reiniciado, MATA o loop imediatamente
                     self.proximo_relatorio = tempo_espera_segundos - t
+                    self.relatorio_min = f"{self.proximo_relatorio // 60:02d}"
+                    self.relatorio_seg = f"{self.proximo_relatorio % 60:02d}"
 
                     if not self.monitorando or self.ciclo != meu_ciclo:
                         return 
@@ -523,7 +527,6 @@ class AuthState(rx.State):
             ).first()
 
             self.tentando_login = True
-            print(self.tentando_login)
 
             if user:    
                 # Verifica a senha usando o Hash Bcrypt
@@ -549,7 +552,6 @@ class AuthState(rx.State):
                     print(f"Token local: {self.token_logado} | Token banco: {user.session_token}")
                     
                     self.tentando_login = False
-                    print(self.tentando_login)
                     yield rx.redirect("/")          
                     return
 

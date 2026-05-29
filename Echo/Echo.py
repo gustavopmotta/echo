@@ -1053,12 +1053,12 @@ def index() -> rx.Component:
 
                 # Configurações de usuários
                 configurações_usuarios(),
-                
+
                 rx.tooltip(
                     rx.icon_button(rx.icon("mail_warning"), color_scheme="gray", variant="soft"),
                     content=rx.cond(
                         AppState.monitorando,
-                        f"Próximo relátorio em: {AppState.proximo_relatorio // 60}:{AppState.proximo_relatorio % 60}",
+                        f"Próximo relátorio em: {AppState.relatorio_min}:{AppState.relatorio_seg}",
                         "App não está monitorando"
                     )
                 ),
