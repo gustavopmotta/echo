@@ -13,14 +13,14 @@ import bcrypt
 import uuid
 import csv
 import io
-import ipaddress
+import time
 
 _config_path = "config.env"
 _ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_ping")
 
 # Criação do arquivo config.env se não existir
 if not os.path.exists(_config_path):
-    print("Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
+    print("[CONFIG] Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
     with open(_config_path, "w", encoding="utf-8") as f:
         f.write("# Configurações de email\nSMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=suasenha\n# Configurações de monitoramento\nINTERVALO_SEGUNDOS=10\nLIMITE_LATENCIA_MS=100\nPINGS_MAXIMOS=12\nFREQUENCIA_EMAILS=60")
 
@@ -43,8 +43,6 @@ class AtivoRede(rx.Model):
     cor_grupo: str = "gray"
     ininterrupto: bool = False
     latencia: float = 0.0
-    latencia_total: float = 0.0
-    qnt_pings: int = 0
     pings_offline: int = 0
     alerta_enviado: bool = False
     status: str = "Aguardando..."
@@ -67,10 +65,10 @@ class GrupoDB(rx.Model, table=True):
 def disparar_relatorio(ativos: list[AtivoRede]):
     # Travas de segurança: não tenta enviar se faltar dados
     if not carregar_emails():
-        print("Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
+        print("[RELATÓRIO] Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
         return
     if not ativos:
-        print("Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
+        print("[RELATÓRIO] Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
         return
 
     load_dotenv(_config_path, override=True)
@@ -81,7 +79,7 @@ def disparar_relatorio(ativos: list[AtivoRede]):
     login = os.environ.get("SMTP_LOGIN")
     senha = os.environ.get("SMTP_PASSWORD")
 
-    print("Montando relatório de ativos em HTML...")
+    print("[RELATÓRIO] Montando relatório de ativos em HTML...")
     
     # 1. Constrói as linhas da tabela dinamicamente com base nos ativos
     linhas_tabela = ""
@@ -95,7 +93,7 @@ def disparar_relatorio(ativos: list[AtivoRede]):
             <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.ip}</td>
             <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.local}</td>
             <td style="padding: 10px; border-bottom: 1px solid #eee; color: {cor_status}; font-weight: bold;">{ativo.status}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.latencia_total/ativo.qnt_pings if ativo.qnt_pings > 0 else 0:.0f} ms</td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee;">{media_historico(ativo.historico)} ms</td>
         </tr>
         """
 
@@ -133,15 +131,15 @@ def disparar_relatorio(ativos: list[AtivoRede]):
 
     # 4. Conecta no servidor e faz o disparo
     try:
-        print(f"Conectando ao servidor SMTP {servidor} via SSL...")
+        print(f"[RELATÓRIO] Conectando ao servidor SMTP {servidor} via SSL...")
         server = smtplib.SMTP_SSL(servidor, porta)
         server.login(login, senha)
         server.sendmail(login, carregar_emails(), msg.as_string())
         server.quit()
         
-        print("E-mail de teste enviado e entregue com sucesso!")
+        print("[RELATÓRIO] E-mail de relatório enviado e entregue com sucesso!")
     except Exception as e:
-        print(f"Falha crítica ao enviar o e-mail: {e}")
+        print(f"[RELATÓRIO] Falha crítica ao enviar o e-mail: {e}")
 
 def disparar_alerta_offline(ativos_criticos: list[AtivoRede]):
     if not ativos_criticos:
@@ -191,7 +189,7 @@ def disparar_alerta_offline(ativos_criticos: list[AtivoRede]):
     """
 
     msg = MIMEMultipart()
-    msg['Subject']=f"⚠️ Echo: {len(ativos_criticos)} ativo(s) offline em grupos críticos"
+    msg['Subject']=f"Echo: {len(ativos_criticos)} ativo(s) offline em grupos críticos"
     msg['From']=login
     msg['To']=", ".join(carregar_emails())
     msg.attach(MIMEText(corpo_html, 'html'))
@@ -215,12 +213,17 @@ def carregar_emails():
         
         return lista_emails
 
+def media_historico(historico: list[dict]) -> float:
+    """Calcula a média das latências do histórico, ignorando entradas offline (0.0)."""
+    entradas = [float(h["latencia"]) for h in historico if float(h["latencia"]) > 0]
+    return round(sum(entradas) / len(entradas), 1) if entradas else 0.0
+
 # 1. ESTADO BASE
 class AppState(rx.SharedState):
     """Estado global compartilhado entre todas as páginas, ideal para dados que precisam ser acessados em múltiplas telas."""
 
     monitorando: bool = False
-    ativos_live: list[AtivoRede] = []
+    _ativos_live: list[AtivoRede] = []
     ciclo: int = 0
     filtro_grupo_atual: str = "Todos"
 
@@ -236,10 +239,19 @@ class AppState(rx.SharedState):
     ram_max_pings: int = 12
     ram_freq_emails: int = 60
 
+    ultimo_ping: float = 0.0  # Timestamp do último ciclo completo
+
+    @rx.var
+    def monitoramento_travado(self) -> bool:
+        """True se o loop não atualiza há mais de 3x o intervalo configurado."""
+        if not self.monitorando or self.ultimo_ping == 0.0:
+            return False
+        return (time.time() - self.ultimo_ping) > (self.ram_intervalo * 3)
+
     @rx.var
     def ativos_agrupados(self) -> dict[str, list[AtivoRede]]:
         grupos = {}
-        for ativo in self.ativos_live:
+        for ativo in self._ativos_live:
             nome_grupo = getattr(ativo, "grupo", None) or "GERAL"
             if nome_grupo not in grupos:
                 grupos[nome_grupo] = []
@@ -286,7 +298,7 @@ class AppState(rx.SharedState):
                 ]
 
                 if not linked_state.monitorando:
-                    linked_state.ativos_live = [
+                    linked_state._ativos_live = [
                         AtivoRede(
                             nome=a.nome, 
                             ip=a.ip, 
@@ -296,8 +308,6 @@ class AppState(rx.SharedState):
                             ininterrupto=mapa_ininterrupto.get(a.grupo, False),
                             status="Aguardando...", 
                             latencia=0.0,
-                            latencia_total=0.0, 
-                            qnt_pings=0, 
                             historico=[]
                         ) for a in registros
                     ]
@@ -311,9 +321,9 @@ class AppState(rx.SharedState):
         self.ciclo += 1
         
         # Reseta o status visual para quem estiver assistindo
-        self.ativos_live = [
+        self._ativos_live = [
             a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": []}) 
-            for a in self.ativos_live
+            for a in self._ativos_live
         ]
 
         return rx.toast.info("Monitoramento pausado.", position="top-right")
@@ -340,8 +350,6 @@ class AppState(rx.SharedState):
                             "grupo": str(a.grupo),
                             "cor_grupo": str(a.cor_grupo),
                             "ininterrupto": bool(a.ininterrupto),
-                            "latencia_total": float(a.latencia_total),
-                            "qnt_pings": int(a.qnt_pings),
                             "pings_offline": int(a.pings_offline),
                             "alerta_enviado": bool(a.alerta_enviado),
                             "historico":[
@@ -349,7 +357,7 @@ class AppState(rx.SharedState):
                                 for h in list(a.historico)[-(self.ram_max_pings - 1):]
                             ],
                         }
-                        for a in self.ativos_live
+                        for a in self._ativos_live
                     ]
                     intervalo = int(self.ram_intervalo)
                     limite_ms = float(self.ram_limite_ms)
@@ -422,8 +430,6 @@ class AppState(rx.SharedState):
                         cor_grupo=ativo["cor_grupo"],
                         ininterrupto=ativo["ininterrupto"],
                         latencia=nova_latencia,
-                        latencia_total=ativo["latencia_total"] + nova_latencia,
-                        qnt_pings=ativo["qnt_pings"] + 1,
                         pings_offline=novo_pings_offline,
                         alerta_enviado=novo_alerta_enviado,
                         status=novo_status,
@@ -451,8 +457,9 @@ class AppState(rx.SharedState):
                 async with self:
                     if not self.monitorando or self.ciclo != meu_ciclo:
                         break
-                    self.ativos_live = ativos_atualizados
-    
+                    self._ativos_live = ativos_atualizados
+                    self.ultimo_ping = time.time()
+                
                 await asyncio.sleep(intervalo)
     
             except asyncio.CancelledError:
@@ -481,9 +488,6 @@ class AppState(rx.SharedState):
             # 2. O SEGREDO: As Micro-Sonecas!
             # Dorme 1 segundo por vez para poder checar se o usuário clicou em Pausar
             for t in range(tempo_espera_segundos):
-                await asyncio.sleep(1)
-                
-                # A cada segundo, dá uma espiada no status da Sala Global
                 async with self:
                     # Se o sistema foi pausado ou reiniciado, MATA o loop imediatamente
                     self.proximo_relatorio = tempo_espera_segundos - t
@@ -492,14 +496,95 @@ class AppState(rx.SharedState):
 
                     if not self.monitorando or self.ciclo != meu_ciclo:
                         return 
+                    
+                await asyncio.sleep(1)                       
 
             # 3. O tempo de espera acabou completo. Hora de tirar a fotografia da rede!
             async with self:
                 if not self.monitorando or self.ciclo != meu_ciclo:
-                    break
+                    return
+                
+                snapshot_relatorio = [
+                    {
+                        "nome":str(a.nome),
+                        "ip":str(a.ip),
+                        "local":str(a.local),
+                        "grupo":str(a.grupo),
+                        "cor_grupo":str(a.cor_grupo),
+                        "ininterrupto":bool(a.ininterrupto),
+                        "pings_offline":int(a.pings_offline),
+                        "alerta_enviado":bool(a.alerta_enviado),
+                        "status":str(a.status),
+                        "latencia":float(a.latencia),
+                        "historico":[
+                            {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
+                            for h in list(a.historico)
+                        ],
+                    }
+                    for a in self._ativos_live
+                ]
+                
             
             # 5. Dispara o e-mail
-            disparar_relatorio(self.ativos_live.copy())
+            disparar_relatorio([AtivoRede(**s) for s in snapshot_relatorio])
+
+            # 6. Reseta o histórico de todos os ativos após o envio
+            async with self:
+                if not self.monitorando or self.ciclo != meu_ciclo:
+                    return
+                self._ativos_live = [
+                    AtivoRede(
+                        nome=s["nome"],
+                        ip=s["ip"],
+                        local=s["local"],
+                        grupo=s["grupo"],
+                        cor_grupo=s["cor_grupo"],
+                        ininterrupto=s["ininterrupto"],
+                        pings_offline=s["pings_offline"],
+                        alerta_enviado=s["alerta_enviado"],
+                        status=s["status"],
+                        latencia=s["latencia"],
+                        historico=[],
+                    )
+                    for s in snapshot_relatorio
+                ]
+                print("[RELATORIO] Histórico de todos os ativos resetado após envio do relatório.")
+
+    @rx.event(background=True)
+    async def loop_watchdog(self):
+        """Monitora se o loop principal travou e o reinicia automaticamente."""
+        async with self:
+            meu_ciclo = self.ciclo
+
+        while True:
+            try:
+                await asyncio.sleep(30)  # Checa a cada 30 segundos
+
+                async with self:
+                    if not self.monitorando or self.ciclo != meu_ciclo:
+                        break
+
+                    tempo_desde_ultimo = time.time() - self.ultimo_ping
+                    intervalo = self.ram_intervalo
+
+                # Se passou mais de 3x o intervalo sem ping, reinicia o loop
+                if self.ultimo_ping > 0 and tempo_desde_ultimo > (intervalo * 3):
+                    print(f"[WATCHDOG] Loop travado há {tempo_desde_ultimo:.0f}s. Reiniciando...")
+                    async with self:
+                        self.ciclo += 1
+                        meu_ciclo = self.ciclo
+                        self.ultimo_ping = time.time()
+
+                    return [
+                        AppState.loop_motor_central(),
+                        rx.toast.warning("Monitoramento reiniciado automaticamente.", position="top-right")
+                    ]
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[WATCHDOG] Erro: {e}")
+                await asyncio.sleep(10)
 
 # 2. ESTADO DE AUTENTICAÇÃO
 class AuthState(rx.State):
@@ -548,8 +633,6 @@ class AuthState(rx.State):
                     
                     self.email_input = ""
                     self.senha_input = ""
-
-                    print(f"Token local: {self.token_logado} | Token banco: {user.session_token}")
                     
                     self.tentando_login = False
                     yield rx.redirect("/")          
@@ -559,7 +642,6 @@ class AuthState(rx.State):
             yield rx.toast.error("Usuário ou senha incorretos.", position="top-right")
             self.senha_input = ""
             self.tentando_login = False
-            print(self.tentando_login)
 
     @rx.event
     def fazer_logout(self):
@@ -581,13 +663,13 @@ class AuthState(rx.State):
         with rx.session() as session:
             # Se não existe NENHUM usuário no banco, força a ir para a tela de Setup
             if not session.exec(User.select()).first():
-                print("Nenhum usuário encontrado no banco de dados. Redirecionando para a tela de configuração inicial.")
+                print("[AUTENTICAÇÃO] Nenhum usuário encontrado no banco de dados. Redirecionando para a tela de configuração inicial.")
                 self.usuario_logado, self.token_logado = "", ""
                 return rx.redirect("/setup")
                 
             # Se existem usuários, mas o navegador não tem sessão, vai pro Login
             if not self.usuario_logado or not self.token_logado:
-                print("Acesso negado: Nenhuma sessão ativa encontrada no navegador.")
+                print("[AUTENTICAÇÃO] Acesso negado: Nenhuma sessão ativa encontrada no navegador.")
                 return rx.redirect("/login")
     
             user = session.exec(User.select().where(User.username == self.usuario_logado)).first()
@@ -596,13 +678,13 @@ class AuthState(rx.State):
                 # O PULO DO GATO: Se o token do navegador for diferente do banco, 
                 # significa que outro PC fez login com essa conta depois de nós!
                 if user.session_token != self.token_logado:
-                    print("Acesso negado: Token de sessão inválido. Outro login detectado para este usuário.")
+                    print("[AUTENTICAÇÃO] Acesso negado: Token de sessão inválido. Outro login detectado para este usuário.")
                     self.usuario_logado, self.token_logado = "", ""   
                     return rx.redirect("/login")
 
                 self.role_logado = user.role
             else:
-                print("Acesso negado: Usuário não encontrado no banco de dados.")
+                print("[AUTENTICAÇÃO] Acesso negado: Usuário não encontrado no banco de dados.")
                 self.usuario_logado, self.token_logado = "", ""
                 return rx.redirect("/login")
 
@@ -970,8 +1052,6 @@ class MonitoramentoState(rx.State):
                     ininterrupto=mapa_ininterrupto.get(a.grupo, False),
                     status="Aguardando...",
                     latencia=0.0,
-                    latencia_total=0.0,
-                    qnt_pings=0,
                     pings_offline=0,
                     alerta_enviado=False,
                     historico=[],
@@ -988,8 +1068,8 @@ class MonitoramentoState(rx.State):
         sala = await self.get_state(AppState)
         
         # Se o motor central estiver DESLIGADO, joga a lista inativa na TV para os usuários verem!
-        if not sala.monitorando and len(sala.ativos_live) == 0:
-            sala.ativos_live = self.ativos
+        if not sala.monitorando and len(sala._ativos_live) == 0:
+            sala._ativos_live = self.ativos
 
     @rx.event
     async def adicionar_ativo_buffer(self):
@@ -1063,10 +1143,10 @@ class MonitoramentoState(rx.State):
         # 3. Mesclagem Inteligente (Atualiza a tela na hora!)
         if not sala.monitorando:
             # Se o sistema estiver pausado, é só jogar a lista nova na tela
-            sala.ativos_live = self.ativos
+            sala._ativos_live = self.ativos
         else:
             # Se estiver rodando, mantemos o status dos antigos e adicionamos os novos!
-            ativos_rodando = {a.ip: a for a in sala.ativos_live}
+            ativos_rodando = {a.ip: a for a in sala._ativos_live}
             nova_lista_global = []
             
             for ativo_base in self.ativos:
@@ -1083,7 +1163,7 @@ class MonitoramentoState(rx.State):
                     nova_lista_global.append(ativo_base)
             
             # O Reflex avisa todos os PCs
-            sala.ativos_live = nova_lista_global
+            sala._ativos_live = nova_lista_global
             
         return rx.toast.success("Ativos atualizados e sincronizados!", position="top-right")
 
@@ -1158,10 +1238,10 @@ class MonitoramentoState(rx.State):
         sala.monitorando = True
         
         # Agora ele passa a lista fresca com todos os novos ativos
-        sala.ativos_live = self.ativos 
+        sala._ativos_live = self.ativos 
         sala.ciclo += 1
         
-        return [AppState.loop_motor_central(), AppState.loop_relatorio()]
+        return [AppState.loop_motor_central(), AppState.loop_relatorio(), AppState.loop_watchdog()]
 
 # 5. ESTADO DE GERENCIAMENTO DE USUÁRIOS
 class UserManagementState(rx.State):
