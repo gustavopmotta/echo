@@ -1,5 +1,5 @@
 import reflex as rx
-from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, AppState
+from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, ResumoGrupo
 
 radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'brown', 'orange', 'sky', 'mint', 'lime', 'yellow', 'amber', 'gold', 'bronze', 'gray']
 
@@ -67,31 +67,76 @@ def renderizar_card(ativo: AtivoRede):
     )
 
 # --- CARD DE GRUPO ---
-def renderizar_bloco_grupo(dados_do_grupo):
-    """
-    Recebe um item do dicionário.
-    dados_do_grupo[0] = Nome do Grupo (String)
-    dados_do_grupo[1] = Lista de Ativos daquele grupo (List)
-    """
-    nome_grupo = dados_do_grupo[0]
-    lista_ativos = dados_do_grupo[1]
+def renderizar_bloco_grupo(resumo: ResumoGrupo): # <-- Note a tipagem aqui!
     
-    return rx.card(
-        rx.heading(nome_grupo, size="6", width="100%", text_align="center"),
-        rx.divider(margin_y="1em", size="4"),
+    # A lógica de cores fica nativa e livre de bugs
+    cor_borda = rx.cond(
+        resumo.offline > 0,
+        "red",
+        rx.cond(
+            resumo.lentos > 0,
+            "orange",
+            "green"
+        )
+    )
 
-        rx.grid(
-            rx.foreach(
-                lista_ativos,
-                renderizar_card
+    return rx.card(
+        rx.vstack(
+            rx.hstack(
+                rx.heading(resumo.nome, size="6"),
+                rx.spacer(),
+                rx.badge(resumo.total, " Ativos", color_scheme="blue"),
+                width="100%"
             ),
-            columns="3",
-            spacing="4",
+            
+            rx.hstack(
+                rx.text("🟢 ", resumo.online, " Online"),
+                rx.text("🟡 ", resumo.lentos, " Lentos"),
+                rx.text(
+                    "🔴 ", resumo.offline, " Offline", 
+                    font_weight=rx.cond(resumo.offline > 0, "bold", "normal")
+                ),
+                rx.text("⚡ Média: ", resumo.latencia_media, "ms"),
+                spacing="4"
+            ),
+            
+            rx.button(
+                rx.cond(
+                    MonitoramentoState.grupo_expandido == resumo.nome, 
+                    "Ocultar Detalhes", 
+                    "Ver Gráficos do Grupo"
+                ),
+                on_click=MonitoramentoState.alternar_detalhes_grupo(resumo.nome),
+                variant="soft",
+                color_scheme="gray",
+                width="100%",
+                margin_top="3"
+            ),
+
+            rx.cond(
+                MonitoramentoState.grupo_expandido == resumo.nome,
+                rx.box(
+                    rx.divider(margin_y="4"),
+                    # O PULO DO GATO É AQUI: Não tem mais busca no AppState! 
+                    # A lista já está dentro do próprio resumo!
+                    rx.foreach(
+                        resumo.ativos_lista, 
+                        renderizar_card 
+                    ),
+                    width="100%"
+                ),
+                rx.fragment() 
+            ),
+            
+            align_items="start",
             width="100%"
         ),
         
-        margin_bottom="0.5em",
-        width="100%"
+        border_top_width="4px",
+        border_top_style="solid",
+        border_top_color=cor_borda,
+        width="100%",
+        margin_bottom="4"
     )
 
 # --- TELA DE LOGIN ---
@@ -611,7 +656,7 @@ def configurações_ativos() -> rx.Component:
                 rx.alert_dialog.description(
                     "O arquivo deve conter as colunas: ",
                     rx.code("nome, ip, local, grupo"),
-                    ". IPs já cadastrados serão ignorados."
+                    ". IPs já cadastrados serão ignorados. Certifique-se de que os grupos existam antes de importar."
                 ),
 
                 rx.divider(margin_y="1em"),
@@ -1076,7 +1121,7 @@ def index() -> rx.Component:
             rx.vstack(
                 # Itera sobre o dicionário agrupado que criamos no Passo 1
                 rx.foreach(
-                    AppState.ativos_agrupados,
+                    AppState.resumo_grupos,
                     renderizar_bloco_grupo
                 ),
                 width="100%",

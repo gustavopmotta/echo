@@ -14,6 +14,7 @@ import uuid
 import csv
 import io
 import time
+import pydantic
 
 _config_path = "config.env"
 _ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_ping")
@@ -34,7 +35,7 @@ class User(rx.Model, table=True):
     role: str = "operador" # "admin" ou "operador"
     session_token: str = ""
 
-class AtivoRede(rx.Model):
+class AtivoRede(pydantic.BaseModel):
     """Modelo para representar os ativos de rede em memória durante o monitoramento."""
     nome: str
     ip: str
@@ -47,6 +48,8 @@ class AtivoRede(rx.Model):
     alerta_enviado: bool = False
     status: str = "Aguardando..."
     historico: list[dict[str, str | float]] = []
+    total_latencia: float = 0.0
+    total_pings: int = 0
 
 class AtivoDB(rx.Model, table=True):
     """Tabela para armazenar os ativos de rede no banco de dados SQLite."""
@@ -55,6 +58,17 @@ class AtivoDB(rx.Model, table=True):
     local: str
     grupo: str = "GERAL"
     status: str = "Aguardando..."
+
+class ResumoGrupo(pydantic.BaseModel):
+    """Estrutura de dados perfeita para a gaveta de monitoramento"""
+    nome: str
+    total: int
+    online: int
+    lentos: int
+    offline: int
+    latencia_media: float
+    total_pings: int
+    ativos_lista: list[AtivoRede]
 
 class GrupoDB(rx.Model, table=True):
     """Tabela para armazenar grupos no banco de dados SQLite."""
@@ -93,7 +107,7 @@ def disparar_relatorio(ativos: list[AtivoRede]):
             <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.ip}</td>
             <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.local}</td>
             <td style="padding: 10px; border-bottom: 1px solid #eee; color: {cor_status}; font-weight: bold;">{ativo.status}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;">{media_historico(ativo.historico)} ms</td>
+            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.total_latencia / ativo.total_pings if ativo.total_pings > 0 else 0:.1f} ms</td>
         </tr>
         """
 
@@ -213,17 +227,13 @@ def carregar_emails():
         
         return lista_emails
 
-def media_historico(historico: list[dict]) -> float:
-    """Calcula a média das latências do histórico, ignorando entradas offline (0.0)."""
-    entradas = [float(h["latencia"]) for h in historico if float(h["latencia"]) > 0]
-    return round(sum(entradas) / len(entradas), 1) if entradas else 0.0
-
 # 1. ESTADO BASE
 class AppState(rx.SharedState):
     """Estado global compartilhado entre todas as páginas, ideal para dados que precisam ser acessados em múltiplas telas."""
 
     monitorando: bool = False
     _ativos_live: list[AtivoRede] = []
+    resumo_grupos: list[ResumoGrupo] = []
     ciclo: int = 0
     filtro_grupo_atual: str = "Todos"
 
@@ -234,19 +244,55 @@ class AppState(rx.SharedState):
     relatorio_min: str = f"{proximo_relatorio // 60:02d}"
     relatorio_seg: str = f"{proximo_relatorio % 60:02d}"
 
-    ram_intervalo: int = 10
-    ram_limite_ms: int = 100
-    ram_max_pings: int = 12
-    ram_freq_emails: int = 60
+    _ram_intervalo: int = 10
+    _ram_limite_ms: int = 100
+    _ram_max_pings: int = 12
+    _ram_freq_emails: int = 60
 
     ultimo_ping: float = 0.0  # Timestamp do último ciclo completo
+
+    def _recalcular_resumos(self):
+        """Função interna que gera a matemática da interface baseada na lista atual."""
+        novos_grupos = {}
+        for ativo in self._ativos_live:
+            nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
+            if nome_grupo not in novos_grupos:
+                novos_grupos[nome_grupo] = []
+            novos_grupos[nome_grupo].append(ativo)
+            
+        self.ativos_agrupados = novos_grupos
+        
+        lista_resumos = []
+        for nome, ativos_do_grupo in novos_grupos.items():
+            online = sum(1 for a in ativos_do_grupo if a.status == "Online")
+            lentos = sum(1 for a in ativos_do_grupo if a.status == "Lento")
+            offline = sum(1 for a in ativos_do_grupo if a.status == "Offline")
+            
+            lats_validas = [a.latencia for a in ativos_do_grupo if a.latencia > 0]
+            media_lat = sum(lats_validas) / len(lats_validas) if lats_validas else 0.0
+            total_pings_grupo = sum(getattr(a, "total_pings", 0) for a in ativos_do_grupo)
+            
+            lista_resumos.append(
+                ResumoGrupo(
+                    nome=nome,
+                    total=len(ativos_do_grupo),
+                    online=online,
+                    lentos=lentos,
+                    offline=offline,
+                    latencia_media=round(media_lat, 1),
+                    total_pings=total_pings_grupo,
+                    ativos_lista=ativos_do_grupo
+                )
+            )
+            
+        self.resumo_grupos = lista_resumos
 
     @rx.var
     def monitoramento_travado(self) -> bool:
         """True se o loop não atualiza há mais de 3x o intervalo configurado."""
         if not self.monitorando or self.ultimo_ping == 0.0:
             return False
-        return (time.time() - self.ultimo_ping) > (self.ram_intervalo * 3)
+        return (time.time() - self.ultimo_ping) > (self._ram_intervalo * 3)
 
     @rx.var
     def ativos_agrupados(self) -> dict[str, list[AtivoRede]]:
@@ -262,10 +308,10 @@ class AppState(rx.SharedState):
     async def recarregar_configs_da_memoria(self):
         """O Gatilho: Puxa o .env atualizado e injeta na RAM para os loops usarem."""
         load_dotenv(_config_path, override=True)
-        self.ram_intervalo = int(os.environ.get("INTERVALO_SEGUNDOS", 10))
-        self.ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
-        self.ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
-        self.ram_freq_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
+        self._ram_intervalo = int(os.environ.get("INTERVALO_SEGUNDOS", 10))
+        self._ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
+        self._ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
+        self._ram_freq_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
 
     @rx.event
     async def conectar_painel(self):
@@ -312,6 +358,8 @@ class AppState(rx.SharedState):
                         ) for a in registros
                     ]
 
+                    self._recalcular_resumos()
+
                 linked_state.buffer_iniciado = True
     
     @rx.event
@@ -322,9 +370,11 @@ class AppState(rx.SharedState):
         
         # Reseta o status visual para quem estiver assistindo
         self._ativos_live = [
-            a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": []}) 
+            a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": [], "total_latencia": 0.0, "total_pings": 0}) 
             for a in self._ativos_live
         ]
+
+        self._recalcular_resumos()
 
         return rx.toast.info("Monitoramento pausado.", position="top-right")
 
@@ -354,14 +404,17 @@ class AppState(rx.SharedState):
                             "alerta_enviado": bool(a.alerta_enviado),
                             "historico":[
                                 {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
-                                for h in list(a.historico)[-(self.ram_max_pings - 1):]
+                                for h in list(a.historico)[-(self._ram_max_pings - 1):]
                             ],
+                            # PREVENÇÃO DE BUG: Adicionado ao snapshot para o .get() funcionar!
+                            "total_latencia": float(getattr(a, "total_latencia", 0.0)),
+                            "total_pings": int(getattr(a, "total_pings", 0)),
                         }
                         for a in self._ativos_live
                     ]
-                    intervalo = int(self.ram_intervalo)
-                    limite_ms = float(self.ram_limite_ms)
-                    max_pings = int(self.ram_max_pings)
+                    intervalo = int(self._ram_intervalo)
+                    limite_ms = float(self._ram_limite_ms)
+                    max_pings = int(self._ram_max_pings)
     
                 if not ativos_snapshot:
                     await asyncio.sleep(intervalo)
@@ -399,18 +452,15 @@ class AppState(rx.SharedState):
                         else "Online"
                     )
 
-                    # Atualiza contador de pings offline consecutivos
                     if novo_status == "Offline":
                         novo_pings_offline = ativo["pings_offline"] + 1
                     else:
                         novo_pings_offline = 0
 
-                    # Reseta o alerta quando o ativo voltar online
                     novo_alerta_enviado = ativo["alerta_enviado"]
                     if novo_status != "Offline":
                         novo_alerta_enviado = False
 
-                    # Marca para disparar alerta se ativo ininterrupto atingiu 5 pings offline
                     if (
                         ativo["ininterrupto"]
                         and novo_pings_offline >= 5
@@ -434,16 +484,16 @@ class AppState(rx.SharedState):
                         alerta_enviado=novo_alerta_enviado,
                         status=novo_status,
                         historico=novo_historico,
+                        total_latencia=ativo.get("total_latencia", 0.0) + nova_latencia,
+                        total_pings=ativo.get("total_pings", 0) + 1
                     ))
 
-                # Dispara alerta e marca os ativos para não repetir
                 if disparar_alerta:
                     ativos_criticos = [
                         a for a in ativos_atualizados
                         if a.ininterrupto and a.pings_offline >= 3
                     ]
                     if ativos_criticos:
-                        # Marca alerta_enviado para não repetir no próximo ciclo
                         for a in ativos_atualizados:
                             if a.ininterrupto and a.pings_offline >= 5:
                                 a.alerta_enviado = True
@@ -454,22 +504,36 @@ class AppState(rx.SharedState):
                             ativos_criticos.copy()
                         )
     
+                # --- O BLOCO FINAL OTIMIZADO ---
                 async with self:
                     if not self.monitorando or self.ciclo != meu_ciclo:
                         break
+                    
+                    # 1. Atualiza a lista privada principal
                     self._ativos_live = ativos_atualizados
+                    
+                    # 2. Constrói o agrupamento para quem for clicar em "Detalhes"
+                    novos_grupos = {}
+                    for ativo in ativos_atualizados:
+                        nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
+                        if nome_grupo not in novos_grupos:
+                            novos_grupos[nome_grupo] = []
+                        novos_grupos[nome_grupo].append(ativo)
+                        
+                    self.ativos_agrupados = novos_grupos
+                    
+                    self._recalcular_resumos()
+                    
                     self.ultimo_ping = time.time()
                 
                 await asyncio.sleep(intervalo)
     
             except asyncio.CancelledError:
-                # O Reflex cancelou o task intencionalmente — encerra limpo
                 print("[MOTOR] Task cancelada pelo Reflex. Encerrando loop.")
                 break
             except Exception as e:
-                # Qualquer outro erro: loga e continua na próxima iteração
                 print(f"[MOTOR] Erro inesperado no ciclo de monitoramento: {e}")
-                await asyncio.sleep(5)  # Pausa curta antes de tentar de novo
+                await asyncio.sleep(5) 
                 continue
     
     @rx.event(background=True)
@@ -483,7 +547,7 @@ class AppState(rx.SharedState):
             async with self:
                 if not self.monitorando or self.ciclo != meu_ciclo:
                     break
-                tempo_espera_segundos = self.ram_freq_emails * 60 
+                tempo_espera_segundos = self._ram_freq_emails * 60 
 
             # 2. O SEGREDO: As Micro-Sonecas!
             # Dorme 1 segundo por vez para poder checar se o usuário clicou em Pausar
@@ -520,6 +584,8 @@ class AppState(rx.SharedState):
                             {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
                             for h in list(a.historico)
                         ],
+                        "total_latencia":float(a.total_latencia),
+                        "total_pings":int(a.total_pings)
                     }
                     for a in self._ativos_live
                 ]
@@ -545,6 +611,8 @@ class AppState(rx.SharedState):
                         status=s["status"],
                         latencia=s["latencia"],
                         historico=[],
+                        total_latencia=0.0,
+                        total_pings=0
                     )
                     for s in snapshot_relatorio
                 ]
@@ -565,7 +633,7 @@ class AppState(rx.SharedState):
                         break
 
                     tempo_desde_ultimo = time.time() - self.ultimo_ping
-                    intervalo = self.ram_intervalo
+                    intervalo = self._ram_intervalo
 
                 # Se passou mais de 3x o intervalo sem ping, reinicia o loop
                 if self.ultimo_ping > 0 and tempo_desde_ultimo > (intervalo * 3):
@@ -897,6 +965,16 @@ class MonitoramentoState(rx.State):
     preview_validos: int = 0
     preview_erros: int = 0
     _arquivo_csv_buffer: list[AtivoDB] = []
+
+    grupo_expandido: str = ""
+
+    @rx.event
+    def alternar_detalhes_grupo(self, nome_grupo: str):
+        """Abre e fecha a gaveta sem afetar o monitor de outras pessoas."""
+        if self.grupo_expandido == nome_grupo:
+            self.grupo_expandido = "" # Fecha
+        else:
+            self.grupo_expandido = nome_grupo # Abre
 
     @rx.event
     async def carregar_preview_csv(self, arquivos: list[rx.UploadFile]):
