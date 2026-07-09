@@ -5,138 +5,122 @@ radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'v
 
 # --- CARD DE ATIVO ---
 def renderizar_card(ativo: AtivoRede):
-    cor_borda = rx.cond(ativo.status == "Online", "green", 
-                rx.cond(ativo.status == "Lento", "orange", "red"))
-    
-    # Configuração do gráfico de barras de latência
-    grafico = rx.recharts.bar_chart(
-        rx.recharts.bar(
-            data_key="latencia",
-            is_animation_active=False,
-            fill=rx.color(cor_borda, 8),
-            stroke=rx.color(cor_borda, 10),
-            stroke_width=2,
-            radius=[4, 4, 0, 0],
-        ),
-        rx.recharts.x_axis(data_key="hora", hide=False),
-        rx.recharts.y_axis(hide=False, width=40, domain=[0, ConfigState.config["limite_latencia_ms"]]),
-        rx.recharts.graphing_tooltip(),
-        data=ativo.historico,
-        height=160,
-        width="100%",
-    )
-    
-    # Configuração do card de ativos
+    cor_status = rx.cond(ativo.status == "Online", "green",
+                 rx.cond(ativo.status == "Lento", "orange", "red"))
+
+    grafico_aberto = MonitoramentoState.ip_grafico_aberto == ativo.ip
+
     return rx.card(
         rx.vstack(
             rx.hstack(
-                rx.vstack(
-                    rx.hstack(
-                        rx.heading(ativo.nome, size="3"),
-                        rx.badge(ativo.grupo, color_scheme=ativo.cor_grupo, variant="surface"),
-                        spacing="1",
+                rx.hstack(
+                    rx.box(
+                        width="8px", height="8px", border_radius="50%",
+                        background=rx.color(cor_status, 9),
                     ),
-                    
-                    rx.flex(
-                        rx.text(f"IP: {ativo.ip}", color="gray"),
-                        rx.text(f"Local: {ativo.local}", color="gray", size="1"),
-                        direction="column",
-                    ),
-                    align_items="start",
-                    spacing="0",
+                    rx.text(ativo.nome, weight="bold"),
+                    spacing="2",
+                    align_items="center",
                 ),
                 rx.spacer(),
-                rx.vstack(
-                    rx.badge(rx.icon(rx.cond(ativo.status == "Online", "signal", rx.cond(ativo.status == "Lento", "signal_low", "x")) ,size=16), ativo.status, color_scheme=cor_borda),
-                    
-                    rx.cond(
-                        ativo.status != "Offline",
-                        rx.text(f"{ativo.latencia:.0f} ms", font_weight="bold", size="4"),
-                    ),
-                    align_items="end",
+                rx.cond(
+                    ativo.status != "Offline",
+                    rx.text(f"{ativo.latencia:.0f} ms", weight="bold", size="3"),
+                    rx.text("--", color="gray", size="3"),
                 ),
-                align_items="top",
-                width="100%"
+                rx.icon_button(
+                    rx.cond(grafico_aberto, rx.icon("chevron_up"), rx.icon("chevron_down")),
+                    on_click=MonitoramentoState.alternar_grafico_ativo(ativo.ip),
+                    variant="ghost",
+                    color_scheme="gray",
+                    size="1",
+                ),
+                width="100%",
+                align_items="center",
             ),
-            rx.divider(margin_y="0.5em"),
-            grafico,
-            width="100%"
+
+            # Só monta o gráfico se este for o ativo selecionado
+            rx.cond(
+                grafico_aberto,
+                rx.recharts.bar_chart(
+                    rx.recharts.bar(
+                        data_key="latencia",
+                        is_animation_active=True,
+                        fill=rx.color(cor_status, 8),
+                        stroke=rx.color(cor_status, 10),
+                        stroke_width=2,
+                        radius=[4, 4, 0, 0],
+                    ),
+                    rx.recharts.x_axis(data_key="hora"),
+                    rx.recharts.y_axis(hide=False, width=40, domain=[0, ConfigState.config["limite_latencia_ms"]]),
+                    rx.recharts.graphing_tooltip(),
+                    data=ativo.historico,
+                    height=160,
+                    width="100%",
+                    margin_top="0.5em",
+                ),
+            ),
+
+            width="100%",
+            spacing="1",
         ),
-        border_top=f"4px solid var(--{cor_borda}-9)",
+        border_left=f"4px solid var(--{cor_status}-9)",
         width="100%",
+        variant="surface",
+        padding="0.75em",
     )
 
-# --- CARD DE GRUPO ---
-def renderizar_bloco_grupo(resumo: ResumoGrupo): # <-- Note a tipagem aqui!
-    
-    # A lógica de cores fica nativa e livre de bugs
+# --- CARD DE GRUPO (resumo sempre visível, detalhes sob demanda) ---
+def renderizar_bloco_grupo(resumo: ResumoGrupo):
     cor_borda = rx.cond(
-        resumo.offline > 0,
-        "red",
-        rx.cond(
-            resumo.lentos > 0,
-            "orange",
-            "green"
-        )
+        resumo.offline > 0, "red",
+        rx.cond(resumo.lentos > 0, "orange", "green")
     )
+
+    expandido = MonitoramentoState.grupo_expandido == resumo.nome
 
     return rx.card(
         rx.vstack(
             rx.hstack(
                 rx.heading(resumo.nome, size="6"),
                 rx.spacer(),
-                rx.badge(resumo.total, " Ativos", color_scheme="blue"),
-                width="100%"
+                rx.badge(resumo.online, " Online", color_scheme="green", variant="soft"),
+                rx.badge(resumo.lentos, " Lento", color_scheme="orange", variant="soft"),
+                rx.badge(resumo.offline, " Offline", color_scheme="red", variant="soft"),
+                rx.badge(resumo.latencia_media, " ms", color_scheme="blue", variant="soft"),
+                width="100%",
+                align_items="center",
             ),
-            
-            rx.hstack(
-                rx.text("🟢 ", resumo.online, " Online"),
-                rx.text("🟡 ", resumo.lentos, " Lentos"),
-                rx.text(
-                    "🔴 ", resumo.offline, " Offline", 
-                    font_weight=rx.cond(resumo.offline > 0, "bold", "normal")
-                ),
-                rx.text("⚡ Média: ", resumo.latencia_media, "ms"),
-                spacing="4"
-            ),
-            
+
             rx.button(
-                rx.cond(
-                    MonitoramentoState.grupo_expandido == resumo.nome, 
-                    "Ocultar Detalhes", 
-                    "Ver Gráficos do Grupo"
-                ),
+                rx.cond(expandido, "Ocultar Ativos", "Mostrar Ativos"),
+                rx.icon(rx.cond(expandido, "chevron_up", "chevron_down"), size=16),
                 on_click=MonitoramentoState.alternar_detalhes_grupo(resumo.nome),
                 variant="soft",
                 color_scheme="gray",
                 width="100%",
-                margin_top="3"
+                margin_top="3",
             ),
 
             rx.cond(
-                MonitoramentoState.grupo_expandido == resumo.nome,
+                expandido,
                 rx.box(
-                    rx.divider(margin_y="4"),
-                    # O PULO DO GATO É AQUI: Não tem mais busca no AppState! 
-                    # A lista já está dentro do próprio resumo!
-                    rx.foreach(
-                        resumo.ativos_lista, 
-                        renderizar_card 
+                    rx.divider(margin_y="0.75em"),
+                    rx.vstack(
+                        rx.foreach(resumo.ativos_lista, renderizar_card),
+                        width="100%",
+                        spacing="2",
                     ),
-                    width="100%"
+                    width="100%",
                 ),
-                rx.fragment() 
             ),
-            
+
             align_items="start",
-            width="100%"
+            width="100%",
         ),
-        
-        border_top_width="4px",
-        border_top_style="solid",
-        border_top_color=cor_borda,
+        border_top=f"4px solid var(--{cor_borda}-9)",
         width="100%",
-        margin_bottom="4"
+        margin_bottom="4",
     )
 
 # --- TELA DE LOGIN ---
@@ -1124,7 +1108,7 @@ def index() -> rx.Component:
                     AppState.resumo_grupos,
                     renderizar_bloco_grupo
                 ),
-                width="100%",
+                width="40%",
                 padding="4"
             ),
 

@@ -967,6 +967,12 @@ class MonitoramentoState(rx.State):
     _arquivo_csv_buffer: list[AtivoDB] = []
 
     grupo_expandido: str = ""
+    ip_grafico_aberto: str = ""
+
+    @rx.event
+    def alternar_grafico_ativo(self, ip: str):
+        """Abre o histórico de ping do ativo clicado; fecha se já estiver aberto. Só um por vez em toda a tela."""
+        self.ip_grafico_aberto = "" if self.ip_grafico_aberto == ip else ip
 
     @rx.event
     def alternar_detalhes_grupo(self, nome_grupo: str):
