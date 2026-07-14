@@ -62,6 +62,7 @@ class AtivoDB(rx.Model, table=True):
 class ResumoGrupo(pydantic.BaseModel):
     """Estrutura de dados perfeita para a gaveta de monitoramento"""
     nome: str
+    ininterrupto: bool = False
     total: int
     online: int
     lentos: int
@@ -254,38 +255,45 @@ class AppState(rx.SharedState):
     def _recalcular_resumos(self):
         """Função interna que gera a matemática da interface baseada na lista atual."""
         novos_grupos = {}
-        for ativo in self._ativos_live:
-            nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
-            if nome_grupo not in novos_grupos:
-                novos_grupos[nome_grupo] = []
-            novos_grupos[nome_grupo].append(ativo)
-            
-        self.ativos_agrupados = novos_grupos
-        
-        lista_resumos = []
-        for nome, ativos_do_grupo in novos_grupos.items():
-            online = sum(1 for a in ativos_do_grupo if a.status == "Online")
-            lentos = sum(1 for a in ativos_do_grupo if a.status == "Lento")
-            offline = sum(1 for a in ativos_do_grupo if a.status == "Offline")
-            
-            lats_validas = [a.latencia for a in ativos_do_grupo if a.latencia > 0]
-            media_lat = sum(lats_validas) / len(lats_validas) if lats_validas else 0.0
-            total_pings_grupo = sum(getattr(a, "total_pings", 0) for a in ativos_do_grupo)
-            
-            lista_resumos.append(
-                ResumoGrupo(
-                    nome=nome,
-                    total=len(ativos_do_grupo),
-                    online=online,
-                    lentos=lentos,
-                    offline=offline,
-                    latencia_media=round(media_lat, 1),
-                    total_pings=total_pings_grupo,
-                    ativos_lista=ativos_do_grupo
+
+        with rx.session() as session:
+            # Atualiza o mapa de cores e ininterrupto dos grupos com base no banco de dados
+            grupos_db = session.exec(GrupoDB.select()).all()
+            mapa_ininterrupto = {g.nome: g.ininterrupto for g in grupos_db}
+
+            for ativo in self._ativos_live:
+                nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
+                if nome_grupo not in novos_grupos:
+                    novos_grupos[nome_grupo] = []
+                novos_grupos[nome_grupo].append(ativo)
+
+            self.ativos_agrupados = novos_grupos
+
+            lista_resumos = []
+            for nome, ativos_do_grupo in novos_grupos.items():
+                online = sum(1 for a in ativos_do_grupo if a.status == "Online")
+                lentos = sum(1 for a in ativos_do_grupo if a.status == "Lento")
+                offline = sum(1 for a in ativos_do_grupo if a.status == "Offline")
+
+                lats_validas = [a.latencia for a in ativos_do_grupo if a.latencia > 0]
+                media_lat = sum(lats_validas) / len(lats_validas) if lats_validas else 0.0
+                total_pings_grupo = sum(getattr(a, "total_pings", 0) for a in ativos_do_grupo)
+
+                lista_resumos.append(
+                    ResumoGrupo(
+                        nome=nome,
+                        ininterrupto=mapa_ininterrupto.get(nome, False),
+                        total=len(ativos_do_grupo),
+                        online=online,
+                        lentos=lentos,
+                        offline=offline,
+                        latencia_media=round(media_lat, 1),
+                        total_pings=total_pings_grupo,
+                        ativos_lista=ativos_do_grupo
+                    )
                 )
-            )
-            
-        self.resumo_grupos = lista_resumos
+
+            self.resumo_grupos = lista_resumos
 
     @rx.var
     def monitoramento_travado(self) -> bool:
@@ -358,7 +366,7 @@ class AppState(rx.SharedState):
                         ) for a in registros
                     ]
 
-                    self._recalcular_resumos()
+                    linked_state._recalcular_resumos()
 
                 linked_state.buffer_iniciado = True
     

@@ -45,7 +45,7 @@ def renderizar_card(ativo: AtivoRede):
                 rx.recharts.bar_chart(
                     rx.recharts.bar(
                         data_key="latencia",
-                        is_animation_active=True,
+                        is_animation_active=False,
                         fill=rx.color(cor_status, 8),
                         stroke=rx.color(cor_status, 10),
                         stroke_width=2,
@@ -83,6 +83,7 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
         rx.vstack(
             rx.hstack(
                 rx.heading(resumo.nome, size="6"),
+                rx.cond(resumo.ininterrupto, rx.tooltip(rx.badge("24/7", color_scheme="blue", variant="surface"), content="Este grupo é ininterrupto")),
                 rx.spacer(),
                 rx.badge(resumo.online, " Online", color_scheme="green", variant="soft"),
                 rx.badge(resumo.lentos, " Lento", color_scheme="orange", variant="soft"),
