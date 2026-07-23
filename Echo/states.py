@@ -21,7 +21,7 @@ _ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_pin
 
 # Criação do arquivo config.env se não existir
 if not os.path.exists(_config_path):
-    print("[CONFIG] Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [CONFIG] Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
     with open(_config_path, "w", encoding="utf-8") as f:
         f.write("# Configurações de email\nSMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=suasenha\n# Configurações de monitoramento\nINTERVALO_SEGUNDOS=10\nLIMITE_LATENCIA_MS=100\nPINGS_MAXIMOS=12\nFREQUENCIA_EMAILS=60")
 
@@ -80,10 +80,10 @@ class GrupoDB(rx.Model, table=True):
 def disparar_relatorio(ativos: list[AtivoRede]):
     # Travas de segurança: não tenta enviar se faltar dados
     if not carregar_emails():
-        print("[RELATÓRIO] Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
         return
     if not ativos:
-        print("[RELATÓRIO] Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
         return
 
     load_dotenv(_config_path, override=True)
@@ -94,7 +94,7 @@ def disparar_relatorio(ativos: list[AtivoRede]):
     login = os.environ.get("SMTP_LOGIN")
     senha = os.environ.get("SMTP_PASSWORD")
 
-    print("[RELATÓRIO] Montando relatório de ativos em HTML...")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Montando relatório de ativos em HTML...")
     
     # 1. Constrói as linhas da tabela dinamicamente com base nos ativos
     linhas_tabela = ""
@@ -146,15 +146,15 @@ def disparar_relatorio(ativos: list[AtivoRede]):
 
     # 4. Conecta no servidor e faz o disparo
     try:
-        print(f"[RELATÓRIO] Conectando ao servidor SMTP {servidor} via SSL...")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Conectando ao servidor SMTP {servidor} via SSL...")
         server = smtplib.SMTP_SSL(servidor, porta)
         server.login(login, senha)
         server.sendmail(login, carregar_emails(), msg.as_string())
         server.quit()
         
-        print("[RELATÓRIO] E-mail de relatório enviado e entregue com sucesso!")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] E-mail de relatório enviado e entregue com sucesso!")
     except Exception as e:
-        print(f"[RELATÓRIO] Falha crítica ao enviar o e-mail: {e}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Falha crítica ao enviar o e-mail: {e}")
 
 def disparar_alerta_offline(ativos_criticos: list[AtivoRede]):
     if not ativos_criticos:
@@ -214,9 +214,9 @@ def disparar_alerta_offline(ativos_criticos: list[AtivoRede]):
         server.login(login, senha)
         server.sendmail(login, carregar_emails(), msg.as_string())
         server.quit()
-        print(f"[ALERTA] E-mail de offline disparado para {len(ativos_criticos)} ativo(s).")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [ALERTA] E-mail de offline disparado para {len(ativos_criticos)} ativo(s).")
     except Exception as e:
-        print(f"[ALERTA] Falha ao enviar e-mail de alerta: {e}")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [ALERTA] Falha ao enviar e-mail de alerta: {e}")
 
 def carregar_emails():
     with rx.session() as session:
