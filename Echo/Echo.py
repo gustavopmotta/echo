@@ -13,14 +13,19 @@ def renderizar_card(ativo: AtivoRede):
     return rx.card(
         rx.vstack(
             rx.hstack(
-                rx.hstack(
-                    rx.box(
-                        width="8px", height="8px", border_radius="50%",
-                        background=rx.color(cor_status, 9),
+                rx.vstack(
+                    rx.hstack(
+                        rx.box(
+                            width="8px", height="8px", border_radius="50%",
+                            background=rx.color(cor_status, 9),
+                        ),
+                        rx.text(ativo.nome, weight="bold"),
+                        spacing="2",
+                        align_items="center",
                     ),
-                    rx.text(ativo.nome, weight="bold"),
-                    spacing="2",
-                    align_items="center",
+                    rx.text(f"{ativo.ip} - {ativo.local}", color="gray", size="1"),
+                    spacing="0",
+                    align_items="start",
                 ),
                 rx.spacer(),
                 rx.cond(
@@ -82,8 +87,14 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
     return rx.card(
         rx.vstack(
             rx.hstack(
-                rx.heading(resumo.nome, size="6"),
-                rx.cond(resumo.ininterrupto, rx.tooltip(rx.badge("24/7", color_scheme="blue", variant="surface"), content="Este grupo é ininterrupto")),
+                rx.flex(
+                    rx.cond(resumo.ininterrupto, rx.tooltip(rx.icon("clock_fading", color_scheme="blue", variant="surface"), content="Este grupo é ininterrupto")),
+                    rx.heading(resumo.nome, size="6"),                  
+                    align="center",
+                    direction="row",
+                    width="40",
+                    spacing="2"
+                ),
                 rx.spacer(),
                 rx.badge(resumo.online, " Online", color_scheme="green", variant="soft"),
                 rx.badge(resumo.lentos, " Lento", color_scheme="orange", variant="soft"),
