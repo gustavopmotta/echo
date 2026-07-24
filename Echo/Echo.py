@@ -88,12 +88,12 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
         rx.vstack(
             rx.hstack(
                 rx.flex(
-                    rx.cond(resumo.ininterrupto, rx.tooltip(rx.icon("clock_fading", color_scheme="blue", variant="surface"), content="Este grupo é ininterrupto")),
-                    rx.heading(resumo.nome, size="6"),                  
-                    align="center",
+                    rx.heading(resumo.nome, size="6"),                 
+                    rx.cond(resumo.ininterrupto, rx.tooltip(rx.icon("clock_fading", color_scheme="blue", variant="surface", size=20), content="Este grupo é ininterrupto")),
+                    align="baseline",
                     direction="row",
-                    width="40",
-                    spacing="2"
+                    width="stretch",
+                    spacing="2",
                 ),
                 rx.spacer(),
                 rx.badge(resumo.online, " Online", color_scheme="green", variant="soft"),
