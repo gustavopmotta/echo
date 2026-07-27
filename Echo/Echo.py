@@ -934,7 +934,16 @@ def configurações_usuarios() -> rx.Component:
         )
 
     return rx.dialog.root(
-        rx.dialog.trigger(rx.button(rx.icon("users"), "Usuários", color_scheme="orange", variant="surface")),
+        rx.dialog.trigger(
+            rx.button(
+                rx.icon("users"),
+                "Usuários",
+                color_scheme="orange",
+                variant="surface",
+                width="100%",
+                justify_content="start",
+            )
+        ),
 
         rx.dialog.content(
             rx.dialog.title("Gerenciar Usuários", padding_top="1em"),
@@ -1040,96 +1049,131 @@ def configurações_usuarios() -> rx.Component:
     ),
 
 # --- PÁGINA DO PAINEL ---
+def controles_sidebar() -> rx.Component:
+    return rx.vstack(
+        rx.heading("ECHO", size="8", margin_bottom="1em"),
+
+        rx.cond(
+            ~AppState.monitorando,
+            rx.button(
+                rx.icon("play"),
+                "Iniciar Monitoramento",
+                on_click=MonitoramentoState.dar_ignicao_global,
+                color_scheme="green",
+                variant="solid",
+                width="100%",
+            ),
+            rx.button(
+                rx.icon("pause"),
+                "Parar Monitoramento",
+                on_click=AppState.parar_monitoramento_global,
+                color_scheme="red",
+                variant="solid",
+                width="100%",
+            ),
+        ),
+
+        rx.dialog.root(
+            rx.dialog.trigger(
+                rx.button(
+                    rx.icon("settings"),
+                    "Configurações",
+                    color_scheme="blue",
+                    variant="surface",
+                    disabled=AppState.monitorando,
+                    width="100%",
+                    justify_content="start",
+                )
+            ),
+
+            rx.dialog.content(
+                rx.tabs.root(
+                    rx.tabs.list(
+                        rx.tabs.trigger("Configurações", value="config", color_scheme="purple"),
+                        rx.tabs.trigger("Gerenciar Ativos", value="ativos", color_scheme="blue"),
+                    ),
+
+                    configurações_gerais(),
+                    configurações_ativos(),
+
+                    default_value="config",
+                ),
+
+                width="35%",
+            ),
+        ),
+
+        configurações_usuarios(),
+
+        rx.tooltip(
+            rx.icon_button(
+                rx.icon("mail_warning"),
+                color_scheme="gray",
+                variant="soft",
+                width="100%",
+            ),
+            content=rx.cond(
+                AppState.monitorando,
+                f"Próximo relátorio em: {AppState.relatorio_min}:{AppState.relatorio_seg}",
+                "App não está monitorando",
+            ),
+        ),
+
+        rx.tooltip(
+            rx.icon_button(
+                rx.icon("door_open"),
+                on_click=AuthState.fazer_logout,
+                color_scheme="red",
+                variant="surface",
+                width="100%",
+            ),
+            content="Sair",
+        ),
+
+        spacing="3",
+        align_items="stretch",
+        width="280px",
+        min_width="280px",
+        padding="1.25em",
+        border_right="1px solid var(--gray-6)",
+        min_height="100vh",
+        background=rx.color("gray", 1),
+        position="sticky",
+        top="0",
+    )
+
+
 def index() -> rx.Component:
-    return rx.box(
-        rx.color_mode.button(position="top-right"),
-        
-        rx.vstack(
-            # Titulo do painel
-            rx.heading("ECHO", size="9"),
-            
-            # Botões de controle
-            rx.hstack(
-                rx.cond(
-                    ~AppState.monitorando,
-                    rx.button(
-                        rx.icon("play"),
-                        "Iniciar Monitoramento", 
-                        on_click=MonitoramentoState.dar_ignicao_global, 
-                        color_scheme="green",
-                        variant="solid"
-                    ),
-                    rx.button(
-                        rx.icon("pause"),
-                        "Parar Monitoramento", 
-                        on_click=AppState.parar_monitoramento_global, 
-                        color_scheme="red",
-                        variant="solid"
-                    ),
-                ),
-                
-                # Configurações gerais
-                rx.dialog.root(
-                    rx.dialog.trigger(rx.button(rx.icon("settings"), "Configurações", color_scheme="blue", variant="surface", disabled=AppState.monitorando)),
+    return rx.flex(
+        controles_sidebar(),
 
-                    rx.dialog.content(
-                        rx.tabs.root(
-                            rx.tabs.list(
-                                rx.tabs.trigger("Configurações", value="config", color_scheme="purple"),
-                                rx.tabs.trigger("Gerenciar Ativos", value="ativos", color_scheme="blue"),
-                            ),
+        rx.box(
+            rx.color_mode.button(position="top-right"),
 
-                            # --- Configurações Gerais ---
-                            configurações_gerais(),
-
-                            # --- Configurações de Ativos ---
-                            configurações_ativos(),
-
-                            default_value="config"
-                        ),
-
-                        width="35%",
-                    ),
-                ),
-
-                # Configurações de usuários
-                configurações_usuarios(),
-
-                rx.tooltip(
-                    rx.icon_button(rx.icon("mail_warning"), color_scheme="gray", variant="soft"),
-                    content=rx.cond(
-                        AppState.monitorando,
-                        f"Próximo relátorio em: {AppState.relatorio_min}:{AppState.relatorio_seg}",
-                        "App não está monitorando"
-                    )
-                ),
-
-                # Logoff
-                rx.tooltip(
-                    rx.icon_button(rx.icon("door_open"), on_click=AuthState.fazer_logout, color_scheme="red", variant="surface"),
-                    content="Sair"
-                ),
-            ),
-
-            rx.divider(margin_y="1em"),
-            
-            # Cards de ativos
             rx.vstack(
-                # Itera sobre o dicionário agrupado que criamos no Passo 1
-                rx.foreach(
-                    AppState.resumo_grupos,
-                    renderizar_bloco_grupo
+                rx.vstack(
+                    rx.foreach(
+                        AppState.resumo_grupos,
+                        renderizar_bloco_grupo,
+                    ),
+                    width="100%",
+                    max_width="900px",
+                    padding="4",
+                    spacing="3",
                 ),
-                width="40%",
-                padding="4"
+
+                padding="2em",
+                width="100%",
+                align_items="center",
             ),
 
-            padding="2em",
-            align_items="center",
+            flex="1",
+            width="100%",
         ),
 
         width="100%",
-        height="100%",
+        min_height="100vh",
+        align_items="start",
     )
 
 # --- CONFIGURAÇÃO DO APP ---
