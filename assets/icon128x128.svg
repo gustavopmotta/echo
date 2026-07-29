@@ -1,0 +1,52 @@
+<svg width="128" height="128" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Gradiente ajustado para bater exatamente com as novas coordenadas da logo -->
+    <linearGradient id="signal-gradient" x1="2" y1="30" x2="30" y2="2" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#22D3EE" />
+      <stop offset="55%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#8b75ca" />
+    </linearGradient>
+  </defs>
+
+  <!-- Linha Externa -->
+  <polyline 
+    points="2,4 28,4 28,30" 
+    stroke="url(#signal-gradient)" 
+    stroke-opacity="1" 
+    fill="none" 
+    stroke-width="4" 
+    stroke-linejoin="miter" 
+    stroke-linecap="butt"
+  />
+
+  <!-- Linha Média -->
+  <polyline 
+    points="2,12 20,12 20,30" 
+    stroke="url(#signal-gradient)" 
+    stroke-opacity="1" 
+    fill="none" 
+    stroke-width="4" 
+    stroke-linejoin="miter" 
+    stroke-linecap="butt" 
+  />
+
+  <!-- Linha Interna -->
+  <polyline 
+    points="2,20 12,20 12,30" 
+    stroke="url(#signal-gradient)" 
+    stroke-opacity="1" 
+    fill="none" 
+    stroke-width="4" 
+    stroke-linejoin="miter" 
+    stroke-linecap="butt" 
+  />
+
+  <!-- Quadrado Base -->
+  <rect 
+    x="2" 
+    y="26" 
+    width="4" 
+    height="4" 
+    fill="url(#signal-gradient)"
+  />
+</svg>

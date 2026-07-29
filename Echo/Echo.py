@@ -1051,7 +1051,7 @@ def configurações_usuarios() -> rx.Component:
 # --- PÁGINA DO PAINEL ---
 def controles_sidebar() -> rx.Component:
     return rx.vstack(
-        rx.heading("ECHO", size="8", margin_bottom="1em"),
+        rx.heading("ECHO", size="8"),
 
         rx.cond(
             ~AppState.monitorando,
