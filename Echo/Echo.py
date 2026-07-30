@@ -82,8 +82,6 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
         rx.cond(resumo.lentos > 0, "orange", "green")
     )
 
-    expandido = MonitoramentoState.grupo_expandido == resumo.nome
-
     return rx.card(
         rx.vstack(
             rx.hstack(
@@ -104,27 +102,18 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 align_items="center",
             ),
 
-            rx.button(
-                rx.cond(expandido, "Ocultar Ativos", "Mostrar Ativos"),
-                rx.icon(rx.cond(expandido, "chevron_up", "chevron_down"), size=16),
-                on_click=MonitoramentoState.alternar_detalhes_grupo(resumo.nome),
-                variant="soft",
-                color_scheme="gray",
-                width="100%",
-                margin_top="3",
-            ),
+            rx.divider(margin_y="0.5em"),
 
-            rx.cond(
-                expandido,
-                rx.box(
-                    rx.divider(margin_y="0.75em"),
-                    rx.vstack(
-                        rx.foreach(resumo.ativos_lista, renderizar_card),
-                        width="100%",
-                        spacing="2",
-                    ),
+            rx.scroll_area(
+                rx.vstack(
+                    rx.foreach(resumo.ativos_lista, renderizar_card),
                     width="100%",
+                    spacing="2",
                 ),
+                width="100%",
+                type="scroll",
+                style={"max_height": "55vh"},
+                padding_right="1em",
             ),
 
             align_items="start",
@@ -141,8 +130,9 @@ def tela_login() -> rx.Component:
         rx.form(
             rx.card(
                 rx.vstack(
+                    rx.image(src="/icon-white256x256.svg", alt="Logo", width="6em", margin_bottom="1em"),
                     rx.heading("Bem-vindo ao Echo!", size="7"),
-                    rx.text("Faça login com sua conta", size="3", text_align="center", color="gray", margin_bottom="1em"),
+                    rx.text("Faça login com sua conta", size="3", text_align="center", color="gray", margin_bottom="0.5em"),
 
                     rx.vstack(
                         rx.text("Email", size="3", weight="medium", width="100%", text_align="left"),
@@ -195,6 +185,7 @@ def tela_setup_inicial() -> rx.Component:
         rx.form(
             rx.card(
                 rx.vstack(
+                    rx.image(src="/icon-white256x256.svg", alt="Logo", width="6em", margin_bottom="1em"),
                     rx.heading("Bem-vindo ao Echo!", size="7"),
                     rx.text("Crie o usuário Administrador para inicializar o sistema.", size="1", text_align="center", color="gray", margin_bottom="1em"),
 
@@ -237,7 +228,8 @@ def tela_setup_inicial() -> rx.Component:
 
                     align_items="center",
                     spacing="4"
-                ),   
+                ),
+                padding="2em"
             ),
             size="4",
             width="100%",
@@ -989,69 +981,91 @@ def configurações_usuarios() -> rx.Component:
                         )
                     ),
                     width="100%",
-                    padding_bottom="1em"
+                    padding_bottom="1em",
+                    padding_right="0.1em",
                 ),
-                type="scroll", style={"max_height": "30vh"}
+                type="scroll", style={"max_height": "60vh"}, padding_right="1em"
             ),
         
             rx.divider(margin_y="1em"),
-        
-            # Formulário de Adição
-            rx.card(
-                rx.text("Criar Novo Usuário", font_weight="bold", margin_bottom="1em"),
-                rx.vstack(
-                    rx.input(
-                        rx.input.slot(rx.icon("user", color="gray")),
-                        placeholder="Nome de Usuário", 
-                        value=UserManagementState.form_username, 
-                        on_change=UserManagementState.set_form_username,
-                        width="100%"
-                    ),
-                    rx.input(
-                        rx.input.slot(rx.icon("mail", color="gray")),
-                        placeholder="Email", 
-                        value=UserManagementState.form_email, 
-                        on_change=UserManagementState.set_form_email,
-                        width="100%"
-                    ),
-                    rx.input(
-                        rx.input.slot(rx.icon("lock", color="gray")),
-                        placeholder="Senha", 
-                        type="password", 
-                        value=UserManagementState.form_password, 
-                        on_change=UserManagementState.set_form_password,
-                        width="100%"
-                    ),
-                    rx.cond(AuthState.role_logado == "admin",
-                        rx.checkbox(
-                            "Administrador", 
-                            checked=UserManagementState.form_is_admin, 
-                            on_change=UserManagementState.set_form_is_admin
-                        ),
-                    ),
-                    rx.button(
-                        rx.icon("user-plus"), 
-                        "Adicionar Usuário", 
-                        on_click=UserManagementState.adicionar_usuario, 
-                        color_scheme="green", 
-                        width="100%"
-                    ),
 
-                    align_items="start", width="100%", spacing="3"
+            rx.dialog.root(
+                rx.dialog.trigger(
+                    rx.button(
+                        rx.icon("user-plus"),
+                        "Adicionar Usuário",
+                        color_scheme="green",
+                        width="100%",
+                        variant="solid",
+                    )
                 ),
-                width="100%",
-                variant="surface"
+
+                rx.dialog.content(
+                    rx.dialog.title("Criar Novo Usuário"),
+                    rx.dialog.description("Preencha os dados para criar um novo usuário."),
+                    rx.divider(margin_y="1em"),
+                    rx.vstack(
+                        rx.input(
+                            rx.input.slot(rx.icon("user", color="gray")),
+                            placeholder="Nome de Usuário", 
+                            value=UserManagementState.form_username, 
+                            on_change=UserManagementState.set_form_username,
+                            width="100%"
+                        ),
+                        rx.input(
+                            rx.input.slot(rx.icon("mail", color="gray")),
+                            placeholder="Email", 
+                            value=UserManagementState.form_email, 
+                            on_change=UserManagementState.set_form_email,
+                            width="100%"
+                        ),
+                        rx.input(
+                            rx.input.slot(rx.icon("lock", color="gray")),
+                            placeholder="Senha", 
+                            type="password", 
+                            value=UserManagementState.form_password, 
+                            on_change=UserManagementState.set_form_password,
+                            width="100%"
+                        ),
+                        rx.cond(AuthState.role_logado == "admin",
+                            rx.checkbox(
+                                "Administrador", 
+                                checked=UserManagementState.form_is_admin, 
+                                on_change=UserManagementState.set_form_is_admin
+                            ),
+                        ),
+                        rx.button(
+                            rx.icon("user-plus"), 
+                            "Criar Usuário", 
+                            on_click=UserManagementState.adicionar_usuario, 
+                            color_scheme="green", 
+                            width="100%"
+                        ),
+
+                        align_items="start", width="100%", spacing="3"
+                    ),
+                    width="30%",
+                ),
             ),
             modal_edicao_senha(),
 
             width="30%",
+            height="80%",
         ),
     ),
 
 # --- PÁGINA DO PAINEL ---
 def controles_sidebar() -> rx.Component:
     return rx.vstack(
-        rx.heading("ECHO", size="8"),
+        rx.vstack(
+            rx.image(src="/icon-white256x256.svg", width="64px"),
+            rx.heading("ECHO", size="8"),        
+            width="100%",
+            spacing="1",
+            align_items="center",
+        ),
+
+        rx.divider(margin_y="0.5em"),
 
         rx.cond(
             ~AppState.monitorando,
@@ -1171,21 +1185,16 @@ def index() -> rx.Component:
         controles_sidebar(),
 
         rx.box(
-            rx.hstack(
-                rx.color_mode.button(position="top-right"),
-                position="top-right"
-            ),
-
             rx.vstack(
-                rx.vstack(
+                rx.flex(
                     rx.foreach(
                         AppState.resumo_grupos,
                         renderizar_bloco_grupo,
                     ),
                     width="100%",
-                    max_width="900px",
                     padding="4",
                     spacing="3",
+                    columns="2",
                 ),
 
                 padding="2em",
