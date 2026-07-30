@@ -45,6 +45,7 @@ class AtivoRede(pydantic.BaseModel):
     ininterrupto: bool = False
     latencia: float = 0.0
     pings_offline: int = 0
+    pings_online: int = 0
     alerta_enviado: bool = False
     status: str = "Aguardando..."
     historico: list[dict[str, str | float]] = []
@@ -409,6 +410,7 @@ class AppState(rx.SharedState):
                             "cor_grupo": str(a.cor_grupo),
                             "ininterrupto": bool(a.ininterrupto),
                             "pings_offline": int(a.pings_offline),
+                            "pings_online": int(a.pings_online),
                             "alerta_enviado": bool(a.alerta_enviado),
                             "historico":[
                                 {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
@@ -460,15 +462,25 @@ class AppState(rx.SharedState):
                         else "Online"
                     )
 
+                    pings_offline_atual = ativo["pings_offline"]
+                    pings_online_atual = ativo.get("pings_online", 0)
+                    alerta_enviado_atual = ativo["alerta_enviado"]
+                
                     if novo_status == "Offline":
-                        novo_pings_offline = ativo["pings_offline"] + 1
+                        # Continua/inicia a contagem de falhas; zera a contagem de recuperação
+                        novo_pings_offline = pings_offline_atual + 1
+                        novo_pings_online = 0
+                        novo_alerta_enviado = alerta_enviado_atual  # NÃO mexe no alerta aqui
                     else:
-                        novo_pings_offline = 0
-
-                    novo_alerta_enviado = ativo["alerta_enviado"]
-                    if novo_status != "Offline":
-                        novo_alerta_enviado = False
-
+                        # Só considera "recuperado de verdade" após N sucessos seguidos
+                        novo_pings_online = pings_online_atual + 1
+                        if novo_pings_online >= 5:
+                            novo_pings_offline = 0
+                            novo_alerta_enviado = False   # agora sim libera um novo ciclo de alerta
+                        else:
+                            novo_pings_offline = pings_offline_atual  # mantém o histórico de falha
+                            novo_alerta_enviado = alerta_enviado_atual  # mantém o estado do alerta
+                
                     if (
                         ativo["ininterrupto"]
                         and novo_pings_offline >= 5
@@ -489,6 +501,7 @@ class AppState(rx.SharedState):
                         ininterrupto=ativo["ininterrupto"],
                         latencia=nova_latencia,
                         pings_offline=novo_pings_offline,
+                        pings_online=novo_pings_online,
                         alerta_enviado=novo_alerta_enviado,
                         status=novo_status,
                         historico=novo_historico,
@@ -499,7 +512,7 @@ class AppState(rx.SharedState):
                 if disparar_alerta:
                     ativos_criticos = [
                         a for a in ativos_atualizados
-                        if a.ininterrupto and a.pings_offline >= 3
+                        if a.ininterrupto and a.pings_offline >= 5
                     ]
                     if ativos_criticos:
                         for a in ativos_atualizados:

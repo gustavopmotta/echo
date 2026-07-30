@@ -1062,6 +1062,7 @@ def controles_sidebar() -> rx.Component:
                 color_scheme="green",
                 variant="solid",
                 width="100%",
+                justify_content="start",
             ),
             rx.button(
                 rx.icon("pause"),
@@ -1070,6 +1071,7 @@ def controles_sidebar() -> rx.Component:
                 color_scheme="red",
                 variant="solid",
                 width="100%",
+                justify_content="start",
             ),
         ),
 
@@ -1119,21 +1121,42 @@ def controles_sidebar() -> rx.Component:
             ),
         ),
 
-        rx.tooltip(
-            rx.icon_button(
-                rx.icon("door_open"),
-                on_click=AuthState.fazer_logout,
-                color_scheme="red",
-                variant="surface",
-                width="100%",
+        rx.spacer(),
+
+        rx.vstack(
+            rx.divider(margin_y="0.5em"),
+            rx.text("Conectado como:", size="2", color="gray"),
+            rx.text(AuthState.usuario_logado.upper() | "Desconhecido", weight="bold"),
+            rx.text(
+                rx.cond(
+                    AuthState.role_logado == "admin",
+                    "Administrador",
+                    "Operador",
+                ),
+                size="1",
+                color="gray",
             ),
-            content="Sair",
+            rx.tooltip(
+                rx.icon_button(
+                    rx.icon("door_open"),
+                    "Logoff",
+                    on_click=AuthState.fazer_logout,
+                    color_scheme="red",
+                    variant="surface",
+                    width="100%",
+                    margin_top="0.5em",
+                ),
+                content="Sair",
+            ),
+            spacing="1",
+            align_items="start",
+            padding_top="1em",
         ),
 
         spacing="3",
         align_items="stretch",
-        width="280px",
-        min_width="280px",
+        width="260px",
+        min_width="260px",
         padding="1.25em",
         border_right="1px solid var(--gray-6)",
         min_height="100vh",
@@ -1148,7 +1171,10 @@ def index() -> rx.Component:
         controles_sidebar(),
 
         rx.box(
-            rx.color_mode.button(position="top-right"),
+            rx.hstack(
+                rx.color_mode.button(position="top-right"),
+                position="top-right"
+            ),
 
             rx.vstack(
                 rx.vstack(
