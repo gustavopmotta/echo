@@ -79,7 +79,7 @@ def renderizar_card(ativo: AtivoRede):
 def renderizar_bloco_grupo(resumo: ResumoGrupo):
     cor_borda = rx.cond(
         resumo.offline > 0, "red",
-        rx.cond(resumo.lentos > 0, "orange", "green")
+        rx.cond(resumo.latencia_media > ConfigState.config["limite_latencia_ms"], "orange", "green")
     )
 
     return rx.card(
@@ -404,7 +404,7 @@ def configurações_gerais() -> rx.Component:
                 color_scheme="purple", 
                 width="100%" 
             ),
-            width="30%",
+            width="35%",
         ),
     ),
 
