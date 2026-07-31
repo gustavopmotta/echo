@@ -86,8 +86,15 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
         rx.vstack(
             rx.hstack(
                 rx.flex(
-                    rx.heading(resumo.nome, size="6"),                 
-                    rx.cond(resumo.ininterrupto, rx.tooltip(rx.icon("clock_fading", color_scheme="blue", variant="surface", size=20), content="Este grupo é ininterrupto")),
+                    rx.hstack(
+                        rx.box(
+                            width="12px", height="12px", border_radius="50%",
+                            background=rx.color(cor_borda, 9),
+                        ),
+                        rx.heading(resumo.nome, size="6"),
+                        rx.cond(resumo.ininterrupto, rx.tooltip(rx.icon("clock_fading", color_scheme="blue", variant="surface", size=20), content="Este grupo é ininterrupto")),
+                        align_items="center"
+                    ),                               
                     align="baseline",
                     direction="row",
                     width="stretch",
@@ -100,9 +107,10 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 rx.badge(resumo.latencia_media, " ms", color_scheme="blue", variant="soft"),
                 width="100%",
                 align_items="center",
+                margin_top="0.25em",
             ),
 
-            rx.divider(margin_y="0.5em"),
+            rx.divider(margin_y="0.25em"),
 
             rx.scroll_area(
                 rx.vstack(
@@ -119,7 +127,6 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
             align_items="start",
             width="100%",
         ),
-        border_top=f"4px solid var(--{cor_borda}-9)",
         width="100%",
         margin_bottom="4",
     )
@@ -409,7 +416,7 @@ def configurações_ativos() -> rx.Component:
 
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Adicionar Ativo de Rede"),
-                rx.alert_dialog.description("Preencha os detalhes do dispositivo que deseja monitorar."),
+                rx.alert_dialog.description("Preencha os detalhes do novo dispositivo."),
 
                 rx.divider(margin_y="1em"),
 
@@ -1099,7 +1106,7 @@ def controles_sidebar() -> rx.Component:
                 "Iniciar Monitoramento",
                 on_click=MonitoramentoState.dar_ignicao_global,
                 color_scheme="green",
-                variant="solid",
+                variant="surface",
                 width="100%",
                 justify_content="start",
             ),
@@ -1108,7 +1115,7 @@ def controles_sidebar() -> rx.Component:
                 "Parar Monitoramento",
                 on_click=AppState.parar_monitoramento_global,
                 color_scheme="red",
-                variant="solid",
+                variant="surface",
                 width="100%",
                 justify_content="start",
             ),
@@ -1132,8 +1139,6 @@ def controles_sidebar() -> rx.Component:
 
         rx.spacer(),
 
-        rx.divider(),
-
         rx.hstack(
             rx.vstack(
                 rx.text("Conectado como:", size="2", color="gray"),
@@ -1154,18 +1159,20 @@ def controles_sidebar() -> rx.Component:
                 flex="1",
             ),
 
-            rx.tooltip(
-                rx.icon_button(
-                    rx.icon("door_open"),
-                    on_click=AuthState.fazer_logout,
-                    color_scheme="red",
-                    variant="surface",
-                    margin_top="0.5em",
-                    position="top-right",
+            rx.vstack(
+                rx.tooltip(
+                    rx.icon_button(
+                        rx.icon("door_open"),
+                        on_click=AuthState.fazer_logout,
+                        color_scheme="red",
+                        variant="ghost",
+                    ),
+                    content="Sair",
                 ),
-                content="Sair",
+                direction="column-reverse",
+                height="stretch",
             ),
-            align_items="center"
+            align_items="center",
         ),
 
         spacing="3",
