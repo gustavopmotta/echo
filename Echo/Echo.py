@@ -28,11 +28,20 @@ def renderizar_card(ativo: AtivoRede):
                     align_items="start",
                 ),
                 rx.spacer(),
-                rx.cond(
-                    ativo.status != "Offline",
-                    rx.text(f"{ativo.latencia:.0f} ms", weight="bold", size="3"),
-                    rx.text("--", color="gray", size="3"),
-                ),
+                rx.vstack(
+                    rx.cond(
+                        ativo.status != "Offline",
+                        rx.text(f"{ativo.latencia:.0f} ms", weight="bold", size="3"),
+                        rx.text("--", color="gray", size="3"),
+                    ),
+                    rx.cond(
+                        ativo.total_pings > 0,
+                        rx.text(f"Média: {ativo.total_latencia / ativo.total_pings:.0f} ms", color="gray", size="1"),
+                        rx.text("--", color="gray", size="1"),
+                    ),
+                    spacing="0",
+                    align_items="end",
+                ),            
                 rx.icon_button(
                     rx.cond(grafico_aberto, rx.icon("chevron_up"), rx.icon("chevron_down")),
                     on_click=MonitoramentoState.alternar_grafico_ativo(ativo.ip),
@@ -401,7 +410,8 @@ def configurações_gerais() -> rx.Component:
             rx.button(
                 "Salvar Alterações", 
                 on_click=ConfigState.salvar_configs_env, 
-                color_scheme="purple", 
+                color_scheme="purple",
+                variant="soft",
                 width="100%" 
             ),
             width="35%",
@@ -412,7 +422,7 @@ def configurações_gerais() -> rx.Component:
 def configurações_ativos() -> rx.Component:
     def modal_adicionar_ativo() -> rx.Component:
         return rx.alert_dialog.root(
-            rx.alert_dialog.trigger(rx.button(rx.icon("plus"), "Novo", color_scheme="green", flex="1")),
+            rx.alert_dialog.trigger(rx.button(rx.icon("plus"), "Novo", color_scheme="green", variant="soft", flex="1")),
 
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Adicionar Ativo de Rede"),
@@ -491,7 +501,7 @@ def configurações_ativos() -> rx.Component:
 
     def modal_gerenciar_grupos() -> rx.Component:
         return rx.alert_dialog.root(
-            rx.alert_dialog.trigger(rx.button(rx.icon("tags"), "Grupos", color_scheme="purple", flex="1")),
+            rx.alert_dialog.trigger(rx.button(rx.icon("tags"), "Grupos", color_scheme="blue", variant="soft", flex="1")),
 
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Gerenciar Grupos de Ativos"),
@@ -530,7 +540,6 @@ def configurações_ativos() -> rx.Component:
                 ),
 
                 rx.divider(margin_y="1em"),
-
                 
                 rx.card(
                     rx.vstack(
@@ -570,7 +579,7 @@ def configurações_ativos() -> rx.Component:
                         ),
 
                         rx.hstack(
-                            rx.button(rx.icon("plus"), "Adicionar", on_click=ConfigState.adicionar_grupo, color_scheme="green", flex="1"),
+                            rx.button(rx.icon("plus"), "Adicionar", on_click=ConfigState.adicionar_grupo, color_scheme="green", variant="soft", flex="1"),
 
                             rx.alert_dialog.cancel(
                                 rx.button("Sair", variant="soft", color_scheme="gray", width="100%", flex="1")
@@ -635,7 +644,7 @@ def configurações_ativos() -> rx.Component:
                             rx.button("Cancelar", on_click=MonitoramentoState.cancelar_edicao_ativo,    color_scheme="gray", variant="soft")
                         ),
                         rx.alert_dialog.action(
-                            rx.button("Atualizar", on_click=MonitoramentoState.salvar_edicao_ativo,     color_scheme="blue")
+                            rx.button("Atualizar", on_click=MonitoramentoState.salvar_edicao_ativo,     color_scheme="blue", variant="soft")
                         ),
                         spacing="3",
                         justify="end",
@@ -787,6 +796,7 @@ def configurações_ativos() -> rx.Component:
                                     rx.icon("check", size=16),
                                     "Confirmar Importação",
                                     color_scheme="green",
+                                    variant="soft",
                                     on_click=MonitoramentoState.confirmar_importacao_csv,
                                     disabled=MonitoramentoState.preview_validos == 0,
                                 )
@@ -857,7 +867,6 @@ def configurações_ativos() -> rx.Component:
                                     align_items="center",
                                 ),
         
-                                border_top=f"4px solid var(--{ativo['cor_grupo']}-9)",
                                 width="100%",
                             )
                         ),
@@ -867,7 +876,7 @@ def configurações_ativos() -> rx.Component:
                     ),
         
                     type="scroll",
-                    style={"max_height": "50vh"},
+                    style={"max_height": "45vh"},
                     padding_right="1em",
                 ),
         
@@ -892,7 +901,7 @@ def configurações_ativos() -> rx.Component:
                 padding_bottom="1em",
             ),
             # Botões de Ação do Modal
-            rx.button("Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos,color_scheme="blue",justify_self="end", width="100%"),
+            rx.button("Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos, color_scheme="blue",justify_self="end", width="100%", variant="soft"),
         
             modal_edicao_ativo(),
             width="35%",
@@ -907,7 +916,7 @@ def configurações_usuarios() -> rx.Component:
                 rx.alert_dialog.title("Alterar Senha"),
                 rx.alert_dialog.description(
                     "Digite a nova senha para o usuário: ",
-                    rx.text(UserManagementState.usuario_edicao, weight="bold", as_="span"),
+                    rx.text(UserManagementState.usuario_edicao.title(), weight="bold", as_="span"),
                     "."
                 ),
 
@@ -933,19 +942,20 @@ def configurações_usuarios() -> rx.Component:
                 ),
 
                 rx.flex(
+                    rx.alert_dialog.action(
+                        rx.button(
+                            "Salvar Senha", 
+                            on_click=UserManagementState.salvar_nova_senha, 
+                            color_scheme="green",
+                            variant="soft",
+                        )
+                    ),
                     rx.alert_dialog.cancel(
                         rx.button(
                             "Cancelar", 
                             on_click=UserManagementState.cancelar_edicao, 
                             color_scheme="gray", 
-                            variant="soft"
-                        )
-                    ),
-                    rx.alert_dialog.action(
-                        rx.button(
-                            "Salvar Senha", 
-                            on_click=UserManagementState.salvar_nova_senha, 
-                            color_scheme="green"
+                            variant="soft",
                         )
                     ),
                     spacing="3",
@@ -1028,8 +1038,8 @@ def configurações_usuarios() -> rx.Component:
                         rx.icon("user-plus"),
                         "Adicionar Usuário",
                         color_scheme="green",
+                        variant="soft",
                         width="100%",
-                        variant="solid",
                     )
                 ),
 
@@ -1071,7 +1081,8 @@ def configurações_usuarios() -> rx.Component:
                             rx.icon("user-plus"), 
                             "Criar Usuário", 
                             on_click=UserManagementState.adicionar_usuario, 
-                            color_scheme="green", 
+                            color_scheme="green",
+                            variant="soft",
                             width="100%"
                         ),
 
@@ -1142,7 +1153,7 @@ def controles_sidebar() -> rx.Component:
         rx.hstack(
             rx.vstack(
                 rx.text("Conectado como:", size="2", color="gray"),
-                rx.text(AuthState.usuario_logado.upper() | "Desconhecido", weight="bold"),
+                rx.text(AuthState.usuario_logado.title() | "Desconhecido", weight="bold"),
                 rx.text(
                     rx.cond(
                         AuthState.role_logado == "admin",

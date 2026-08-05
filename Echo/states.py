@@ -237,7 +237,6 @@ class AppState(rx.SharedState):
     _ativos_live: list[AtivoRede] = []
     resumo_grupos: list[ResumoGrupo] = []
     ciclo: int = 0
-    filtro_grupo_atual: str = "Todos"
 
     ativos_buffer: list[dict[str, str]] = []
     buffer_iniciado: bool = False
@@ -837,7 +836,6 @@ class ConfigState(rx.State):
     novo_grupo_input: str = ""
     novo_grupo_cor_input: str = "gray"
     novo_grupo_ininterrupto_input: bool = False
-    filtro_grupo_atual: str = "Todos"
     cor_grupo_atual: str = "gray"
 
     # --- Dicionários de Configuração ---
