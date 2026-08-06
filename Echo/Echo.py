@@ -164,7 +164,7 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 ),
                 width="100%",
                 type="scroll",
-                style={"max_height": "22.5rem"},
+                style={"max_height": "22rem"},
                 padding_right="1em",
             ),
 
