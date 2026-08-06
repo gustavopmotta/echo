@@ -91,6 +91,29 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
         rx.cond(resumo.lentos > 0, "orange", "green")
     )
 
+    termo_busca = MonitoramentoState.busca_ativos.get(resumo.nome, "")
+    status_filtro = MonitoramentoState.filtro_status.get(resumo.nome, "Todos")
+    sem_resultado = MonitoramentoState.nenhum_resultado.get(resumo.nome, False)
+
+    def badge_filtro(label: str, contador, cor: str, chave_status: str):
+        ativo_selecionado = status_filtro == chave_status
+        return rx.badge(
+            contador, f" {label}",
+            color_scheme=cor,
+            variant=rx.cond(ativo_selecionado, "solid", "soft"),
+            cursor="pointer",
+            on_click=MonitoramentoState.alternar_filtro_status(resumo.nome, chave_status),
+        )
+
+    def card_filtravel(ativo: AtivoRede):
+        passa_busca = (
+            (termo_busca == "")
+            | ativo.nome.lower().contains(termo_busca.lower())
+            | ativo.ip.contains(termo_busca)
+        )
+        passa_status = (status_filtro == "Todos") | (ativo.status == status_filtro)
+        return rx.cond(passa_busca & passa_status, renderizar_card(ativo), rx.fragment())
+
     return rx.card(
         rx.vstack(
             rx.hstack(
@@ -110,9 +133,9 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                     spacing="2",
                 ),
                 rx.spacer(),
-                rx.badge(resumo.online, " Online", color_scheme="green", variant="soft"),
-                rx.badge(resumo.lentos, " Lento", color_scheme="orange", variant="soft"),
-                rx.badge(resumo.offline, " Offline", color_scheme="red", variant="soft"),
+                badge_filtro("Online", resumo.online, "green", "Online"),
+                badge_filtro("Lento", resumo.lentos, "orange", "Lento"),
+                badge_filtro("Offline", resumo.offline, "red", "Offline"),
                 rx.badge(resumo.latencia_media, " ms", color_scheme="blue", variant="soft"),
                 width="100%",
                 align_items="center",
@@ -121,9 +144,21 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
 
             rx.divider(margin_y="0.25em"),
 
+            rx.debounce_input(
+                rx.input(
+                    rx.input.slot(rx.icon("search", size=14)),
+                    placeholder=f"Buscar em {resumo.nome}...",
+                    value=termo_busca,
+                    on_change=lambda v: MonitoramentoState.set_busca_grupo(resumo.nome, v),
+                    size="2",
+                    width="100%",
+                ),
+                debounce_timeout=250,
+            ),
+
             rx.scroll_area(
                 rx.vstack(
-                    rx.foreach(resumo.ativos_lista, renderizar_card),
+                    rx.foreach(resumo.ativos_lista, card_filtravel),
                     width="100%",
                     spacing="2",
                 ),
@@ -131,6 +166,17 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 type="scroll",
                 style={"max_height": "22.5rem"},
                 padding_right="1em",
+            ),
+
+            rx.cond(
+                sem_resultado,
+                rx.vstack(
+                    rx.text("Nenhum ativo encontrado.", color="gray", size="3", text_align="center"),
+                    rx.icon("search_x", size=50, color="gray"),
+                    width="100%",
+                    align_items="center",
+                    padding="2em"
+                ),
             ),
 
             align_items="start",

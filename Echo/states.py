@@ -987,6 +987,41 @@ class MonitoramentoState(rx.State):
 
     grupo_expandido: str = ""
     ip_grafico_aberto: str = ""
+    busca_ativos: dict[str, str] = {}
+    filtro_status: dict[str, str] = {}
+    nenhum_resultado: dict[str, bool] = {}
+
+    async def _recalcular_visibilidade(self, grupo: str):
+        """Verifica se algum ativo do grupo ainda passa na busca + filtro de status atuais."""
+        sala = await self.get_state(AppState)
+        termo = self.busca_ativos.get(grupo, "").strip().lower()
+        status = self.filtro_status.get(grupo, "Todos")
+
+        ativos_do_grupo = [
+            a for a in sala._ativos_live
+            if (a.grupo or "GERAL") == grupo
+        ]
+
+        algum_visivel = any(
+            (termo == "" or termo in a.nome.lower() or termo in a.ip)
+            and (status == "Todos" or a.status == status)
+            for a in ativos_do_grupo
+        )
+
+        self.nenhum_resultado[grupo] = not algum_visivel
+
+    @rx.event
+    async def set_busca_grupo(self, grupo: str, valor: str):
+        """Atualiza o termo de busca de um grupo específico, sem afetar os demais usuários."""
+        self.busca_ativos[grupo] = valor
+        await self._recalcular_visibilidade(grupo)
+
+    @rx.event
+    async def alternar_filtro_status(self, grupo: str, status: str):
+        """Clica de novo no mesmo status = remove o filtro (volta pra 'Todos')."""
+        atual = self.filtro_status.get(grupo, "Todos")
+        self.filtro_status[grupo] = "Todos" if atual == status else status
+        await self._recalcular_visibilidade(grupo)
 
     @rx.event
     def alternar_grafico_ativo(self, ip: str):
