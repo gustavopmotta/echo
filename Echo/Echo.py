@@ -1234,7 +1234,7 @@ def controles_sidebar() -> rx.Component:
                     color="gray",
                 ),
                 
-                spacing="1",
+                spacing="0",
                 align_items="start",
                 padding_top="1em",
                 flex="1",
