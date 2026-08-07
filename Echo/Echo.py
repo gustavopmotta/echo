@@ -713,7 +713,7 @@ def configurações_ativos() -> rx.Component:
         return rx.alert_dialog.root(
             rx.tooltip(
                 rx.alert_dialog.trigger(
-                    rx.icon_button(rx.icon("upload"), color_scheme="blue", variant="soft")
+                    rx.icon_button(rx.icon("download"), color_scheme="green", variant="soft")
                 ),
                 content="Importar CSV"
             ),
@@ -960,11 +960,11 @@ def configurações_ativos() -> rx.Component:
 
             rx.hstack(
                 modal_adicionar_ativo(),
-                modal_gerenciar_grupos(),
                 modal_importacao(),
+                modal_gerenciar_grupos(),
 
                 rx.tooltip(
-                    rx.icon_button(rx.icon("download"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
+                    rx.icon_button(rx.icon("upload"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
                     content="Exportar CSV"
 
                 ),
@@ -979,7 +979,7 @@ def configurações_ativos() -> rx.Component:
         ),
     ),
 
-# --- CAIXA DE CONFIGURAÇÕES DE USUÁRIOS ---
+# --- CAIXA/ABA DE CONFIGURAÇÕES DE USUÁRIOS ---
 def configurações_usuarios() -> rx.Component:
     def modal_edicao_senha() -> rx.Component:
         return rx.alert_dialog.root(
@@ -1035,7 +1035,6 @@ def configurações_usuarios() -> rx.Component:
 
                 width="25%",
             ),
-            # A MÁGICA ESTÁ AQUI: O modal reage à variável do seu states.py
             open=UserManagementState.usuario_edicao != "",
         )
 
@@ -1161,7 +1160,7 @@ def configurações_usuarios() -> rx.Component:
                     ),
                     width="30%",
                 ),
-            ),
+            ),        
             modal_edicao_senha(),
 
             width="30%",
@@ -1268,7 +1267,6 @@ def controles_sidebar() -> rx.Component:
         position="sticky",
         top="0",
     )
-
 
 def index() -> rx.Component:
     return rx.flex(
