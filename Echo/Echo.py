@@ -309,7 +309,7 @@ def configurações_gerais() -> rx.Component:
                 "Configurações",
                 color_scheme="blue",
                 variant="surface",
-                disabled=AppState.monitorando,
+                disabled=AppState.monitorando | AuthState.role_logado != "admin",
                 width="100%",
                 justify_content="start",
             )
@@ -325,7 +325,6 @@ def configurações_gerais() -> rx.Component:
                 AuthState.role_logado != "admin",
         
                 rx.callout("Acesso restrito para administradores.", icon="shield_check", color_scheme="red", variant="soft"),
-                
         
                 rx.scroll_area(
                     rx.vstack(
@@ -468,7 +467,9 @@ def configurações_gerais() -> rx.Component:
 def configurações_ativos() -> rx.Component:
     def modal_adicionar_ativo() -> rx.Component:
         return rx.alert_dialog.root(
-            rx.alert_dialog.trigger(rx.button(rx.icon("plus"), "Novo", color_scheme="green", variant="soft", flex="1")),
+            rx.alert_dialog.trigger(
+                rx.tooltip(rx.icon_button(rx.icon("plus"), color_scheme="green", variant="soft"), content="Adicionar ativo")
+            ),
 
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Adicionar Ativo de Rede"),
@@ -547,7 +548,10 @@ def configurações_ativos() -> rx.Component:
 
     def modal_gerenciar_grupos() -> rx.Component:
         return rx.alert_dialog.root(
-            rx.alert_dialog.trigger(rx.button(rx.icon("tags"), "Grupos", color_scheme="blue", variant="soft", flex="1")),
+            rx.tooltip(
+                rx.alert_dialog.trigger(rx.icon_button(rx.icon("tags"), color_scheme="blue", variant="soft")),
+                content="Gerenciar grupos",
+            ),
 
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Gerenciar Grupos de Ativos"),
@@ -563,7 +567,7 @@ def configurações_ativos() -> rx.Component:
                                 rx.hstack(
                                     rx.hstack(
                                         rx.text(g["nome"]),
-                                        rx.cond(g["ininterrupto"], rx.tooltip(rx.badge("24/7", color_scheme="blue", variant="surface", align_items="center"), content="Este grupo é ininterrupto")),
+                                        rx.cond(g["ininterrupto"], rx.tooltip(rx.icon("clock-fading", size=16), content="Este grupo é ininterrupto")),
                                         width="100%",
                                         align_items="center",
                                         spacing="1"
@@ -573,7 +577,7 @@ def configurações_ativos() -> rx.Component:
                                     width="100%",
                                     align_items="center",
                                 ),
-                                border_top=f"4px solid var(--{g["cor"]}-9)",
+                                border_left=f"4px solid var(--{g["cor"]}-9)",
                                 width="100%",
                             )
                         ),
@@ -880,6 +884,18 @@ def configurações_ativos() -> rx.Component:
             rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado duranteaedição."),
         
             rx.divider(margin_y="1em"),
+
+            rx.debounce_input(
+                rx.input(
+                    rx.input.slot(rx.icon("search", size=14)),
+                    placeholder="Buscar por nome, IP, local ou grupo...",
+                    value=MonitoramentoState.busca_gerenciamento,
+                    on_change=MonitoramentoState.set_busca_gerenciamento,
+                    width="100%",
+                    margin_bottom="1em"
+                ),
+                debounce_timeout=250,
+            ),
         
             rx.vstack(
                 # Lista de ativos no buffer
@@ -887,34 +903,42 @@ def configurações_ativos() -> rx.Component:
                     rx.vstack(
                         rx.foreach(
                             AppState.ativos_buffer, 
-                            lambda ativo: rx.card(
-                                rx.hstack(
-                                    rx.vstack(
-                                        rx.hstack(
-                                            rx.text(ativo["nome"], font_weight="bold"),
-                                            rx.badge(ativo["grupo"], color_scheme=ativo["cor_grupo"], variant="surface"),
+                            lambda ativo: rx.cond(
+                            (MonitoramentoState.busca_gerenciamento == "")
+                            | ativo["nome"].lower().contains(MonitoramentoState.busca_gerenciamento.lower())
+                            | ativo["ip"].contains(MonitoramentoState.busca_gerenciamento)
+                            | ativo["local"].lower().contains(MonitoramentoState.busca_gerenciamento.lower())
+                            | ativo["grupo"].lower().contains(MonitoramentoState.busca_gerenciamento.lower()),
+
+                                rx.card(
+                                    rx.hstack(
+                                        rx.vstack(
+                                            rx.hstack(
+                                                rx.text(ativo["nome"], font_weight="bold"),
+                                                rx.badge(ativo["grupo"], color_scheme=ativo["cor_grupo"], variant="surface"),
         
-                                            align_items="center",
-                                            spacing="1"
+                                                align_items="center",
+                                                spacing="1"
+                                            ),
+                                            rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
+                                            spacing="0",
+                                            align_items="start",
+                                            width="100%"
                                         ),
-                                        rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
-                                        spacing="0",
-                                        align_items="start",
-                                        width="100%"
+        
+                                        rx.hstack(
+                                            rx.tooltip(rx.icon_button(rx.icon("pencil"), on_click=MonitoramentoState.iniciar_edicao_ativo(ativo["ip"]), color_scheme="blue", variant="soft"), content="Editar Ativo"),
+        
+                                            rx.tooltip(rx.icon_button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="soft"), content="Remover Ativo"),
+                                        ),             
+        
+                                        width="100%",
+                                        align_items="center",
                                     ),
         
-                                    rx.hstack(
-                                        rx.tooltip(rx.icon_button(rx.icon("pencil"), on_click=MonitoramentoState.iniciar_edicao_ativo(ativo["ip"]), color_scheme="blue", variant="soft"), content="Editar Ativo"),
-        
-                                        rx.tooltip(rx.icon_button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="soft"), content="Remover Ativo"),
-                                    ),             
-        
                                     width="100%",
-                                    align_items="center",
                                 ),
-        
-                                width="100%",
-                            )
+                            ),
                         ),
         
                         spacing="2",
@@ -922,32 +946,33 @@ def configurações_ativos() -> rx.Component:
                     ),
         
                     type="scroll",
-                    style={"max_height": "45vh"},
+                    style={"max_height": "40vh"},
                     padding_right="1em",
                 ),
         
-                rx.divider(margin_y="0.5em"),
-                
-                rx.hstack(
-                    modal_adicionar_ativo(),
-                    modal_gerenciar_grupos(),
-                    modal_importacao(),
-        
-                    rx.tooltip(
-                        rx.icon_button(rx.icon("download"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
-                        content="Exportar CSV"
-                    ),
-        
-                    width="100%",
-                    spacing="3"
-                ),
+                rx.divider(),
                 
                 align_items="stretch",
                 width="100%",
                 padding_bottom="1em",
             ),
             # Botões de Ação do Modal
-            rx.button("Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos, color_scheme="blue",justify_self="end", width="100%", variant="soft"),
+
+            rx.hstack(
+                modal_adicionar_ativo(),
+                modal_gerenciar_grupos(),
+                modal_importacao(),
+
+                rx.tooltip(
+                    rx.icon_button(rx.icon("download"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
+                    content="Exportar CSV"
+
+                ),
+
+                rx.button(rx.icon("save"), "Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos, color_scheme="blue",justify_self="end", flex="1", variant="soft"),
+                width="100%",
+            ),
+            
         
             modal_edicao_ativo(),
             width="35%",

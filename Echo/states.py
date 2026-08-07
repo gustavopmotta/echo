@@ -990,6 +990,7 @@ class MonitoramentoState(rx.State):
     busca_ativos: dict[str, str] = {}
     filtro_status: dict[str, str] = {}
     nenhum_resultado: dict[str, bool] = {}
+    busca_gerenciamento: str = ""
 
     async def _recalcular_visibilidade(self, grupo: str):
         """Verifica se algum ativo do grupo ainda passa na busca + filtro de status atuais."""
@@ -1009,6 +1010,10 @@ class MonitoramentoState(rx.State):
         )
 
         self.nenhum_resultado[grupo] = not algum_visivel
+
+    @rx.event
+    def set_busca_gerenciamento(self, valor: str):
+        self.busca_gerenciamento = valor
 
     @rx.event
     async def set_busca_grupo(self, grupo: str, valor: str):
