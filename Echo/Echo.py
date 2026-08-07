@@ -1278,7 +1278,7 @@ def index() -> rx.Component:
 
         rx.box(
             rx.vstack(
-                rx.flex(
+                rx.grid(
                     rx.foreach(
                         AppState.resumo_grupos,
                         renderizar_bloco_grupo,
