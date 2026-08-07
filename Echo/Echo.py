@@ -467,9 +467,13 @@ def configurações_gerais() -> rx.Component:
 def configurações_ativos() -> rx.Component:
     def modal_adicionar_ativo() -> rx.Component:
         return rx.alert_dialog.root(
-            rx.alert_dialog.trigger(
-                rx.tooltip(rx.icon_button(rx.icon("plus"), color_scheme="green", variant="soft"), content="Adicionar ativo")
+            rx.tooltip(
+                rx.alert_dialog.trigger(
+                    rx.icon_button(rx.icon("plus"), color_scheme="green", variant="soft")
+                ),
+                content="Adicionar Ativo"
             ),
+            
 
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Adicionar Ativo de Rede"),
