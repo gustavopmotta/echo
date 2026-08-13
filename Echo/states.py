@@ -63,6 +63,7 @@ class AtivoDB(rx.Model, table=True):
 class ResumoGrupo(pydantic.BaseModel):
     """Estrutura de dados perfeita para a gaveta de monitoramento"""
     nome: str
+    cor: str = "gray"
     ininterrupto: bool = False
     total: int
     online: int
@@ -282,6 +283,7 @@ class AppState(rx.SharedState):
                 lista_resumos.append(
                     ResumoGrupo(
                         nome=nome,
+                        cor=next((g.cor for g in grupos_db if g.nome == nome), "gray"),
                         ininterrupto=mapa_ininterrupto.get(nome, False),
                         total=len(ativos_do_grupo),
                         online=online,
@@ -919,7 +921,21 @@ class ConfigState(rx.State):
                 session.commit()
 
             registros = session.exec(GrupoDB.select()).all()
-            self.grupos = [{"nome": s.nome, "cor": s.cor, "ininterrupto": s.ininterrupto} for s in registros]
+            ativos = session.exec(AtivoDB.select()).all()
+            totais_por_grupo = {}
+            for ativo in ativos:
+                nome_grupo = ativo.grupo or "GERAL"
+                totais_por_grupo[nome_grupo] = totais_por_grupo.get(nome_grupo, 0) + 1
+
+            self.grupos = [
+                {
+                    "nome": s.nome,
+                    "cor": s.cor,
+                    "ininterrupto": s.ininterrupto,
+                    "total": totais_por_grupo.get(s.nome, 0)
+                }
+                for s in registros
+            ]
 
     @rx.event
     def adicionar_grupo(self):
@@ -1307,6 +1323,8 @@ class MonitoramentoState(rx.State):
             
             # O Reflex avisa todos os PCs
             sala._ativos_live = nova_lista_global
+
+        sala._recalcular_resumos()
             
         return rx.toast.success("Ativos atualizados e sincronizados!", position="top-right")
 

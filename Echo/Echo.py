@@ -165,7 +165,6 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 width="100%",
                 type="scroll",
                 style={"max_height": "22rem"},
-                padding_right="1em",
             ),
 
             rx.cond(
@@ -550,104 +549,6 @@ def configurações_ativos() -> rx.Component:
             ),
         ),
 
-    def modal_gerenciar_grupos() -> rx.Component:
-        return rx.alert_dialog.root(
-            rx.tooltip(
-                rx.alert_dialog.trigger(rx.icon_button(rx.icon("tags"), color_scheme="blue", variant="soft")),
-                content="Gerenciar grupos",
-            ),
-
-            rx.alert_dialog.content(
-                rx.alert_dialog.title("Gerenciar Grupos de Ativos"),
-                rx.alert_dialog.description("Organize seus ativos em grupos para facilitar o monitoramento."),
-
-                rx.divider(margin_y="1em"),
-
-                rx.scroll_area(
-                    rx.vstack(
-                        rx.foreach(
-                            ConfigState.grupos, 
-                            lambda g: rx.card(
-                                rx.hstack(
-                                    rx.hstack(
-                                        rx.text(g["nome"]),
-                                        rx.cond(g["ininterrupto"], rx.tooltip(rx.icon("clock-fading", size=16), content="Este grupo é ininterrupto")),
-                                        width="100%",
-                                        align_items="center",
-                                        spacing="1"
-                                    ),
-                                    
-                                    rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_grupo(g["nome"]), color_scheme="red", variant="ghost"),
-                                    width="100%",
-                                    align_items="center",
-                                ),
-                                border_left=f"4px solid var(--{g["cor"]}-9)",
-                                width="100%",
-                            )
-                        ),
-                        spacing="2",
-                        padding_right="0.1em",
-                    ),
-
-                    type="scroll",
-                    style={"max_height": "30vh"},
-                ),
-
-                rx.divider(margin_y="1em"),
-                
-                rx.card(
-                    rx.vstack(
-                        rx.hstack(
-                            rx.input(
-                                rx.input.slot(rx.icon("tag")),
-                                type="text",
-                                placeholder="Novo Grupo",
-                                value=ConfigState.novo_grupo_input,
-                                on_change=ConfigState.set_novo_grupo_input,
-                                flex="1",
-                            ),
-
-                            rx.select.root(
-                                rx.select.trigger(placeholder="Cor destaque"),
-                                rx.select.content(
-                                    rx.foreach(
-                                            radix_colors, 
-                                            lambda cor: 
-                                            rx.select.item(rx.badge(cor.capitalize(), color_scheme=cor), value=cor)
-                                        ),
-                                ),
-                                default_value=ConfigState.novo_grupo_cor_input,
-                                on_change=ConfigState.set_novo_grupo_cor_input
-                            ),
-
-                            spacing="1",
-                        ),
-
-                        rx.tooltip(
-                            rx.checkbox(
-                                "Grupo ininterrupto",
-                                checked=ConfigState.novo_grupo_ininterrupto_input,
-                                on_change=ConfigState.set_novo_grupo_ininterrupto_input
-                            ),
-                            content="Ativo que sempre deve estar ligado. O sistema enviará alertas mais frequentes se um ativo ininterrupto ficar offline.",
-                        ),
-
-                        rx.hstack(
-                            rx.button(rx.icon("plus"), "Adicionar", on_click=ConfigState.adicionar_grupo, color_scheme="green", variant="soft", flex="1"),
-
-                            rx.alert_dialog.cancel(
-                                rx.button("Sair", variant="soft", color_scheme="gray", width="100%", flex="1")
-                            ),
-                            spacing="1",
-                            width="100%"
-                        )                
-                    )
-                ),
-
-                width="25%",
-            ),
-        )
-
     def modal_edicao_ativo() -> rx.Component:
         return rx.alert_dialog.root(
             rx.alert_dialog.content(
@@ -870,25 +771,13 @@ def configurações_ativos() -> rx.Component:
             )
         )
 
-    return rx.dialog.root(
-        rx.dialog.trigger(
-            rx.button(
-                rx.icon("server"),
-                "Gerenciar Ativos",
-                color_scheme="blue",
-                variant="surface",
-                disabled=AppState.monitorando,
-                width="100%",
-                justify_content="start",
-            )
-        ),
-
-        rx.dialog.content(
+    def tab_gerenciar_ativos() -> rx.Component:
+        return rx.tabs.content(
             rx.dialog.title("Gerenciar Ativos de Rede", padding_top="1em"),
-            rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado duranteaedição."),
+            rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado durante a edição."),
         
             rx.divider(margin_y="1em"),
-
+    
             rx.debounce_input(
                 rx.input(
                     rx.input.slot(rx.icon("search", size=14)),
@@ -913,7 +802,7 @@ def configurações_ativos() -> rx.Component:
                             | ativo["ip"].contains(MonitoramentoState.busca_gerenciamento)
                             | ativo["local"].lower().contains(MonitoramentoState.busca_gerenciamento.lower())
                             | ativo["grupo"].lower().contains(MonitoramentoState.busca_gerenciamento.lower()),
-
+    
                                 rx.card(
                                     rx.hstack(
                                         rx.vstack(
@@ -951,7 +840,7 @@ def configurações_ativos() -> rx.Component:
         
                     type="scroll",
                     style={"max_height": "40vh"},
-                    padding_right="1em",
+                    
                 ),
         
                 rx.divider(),
@@ -961,26 +850,167 @@ def configurações_ativos() -> rx.Component:
                 padding_bottom="1em",
             ),
             # Botões de Ação do Modal
-
+    
             rx.hstack(
                 modal_adicionar_ativo(),
                 modal_importacao(),
-                modal_gerenciar_grupos(),
-
+    
                 rx.tooltip(
                     rx.icon_button(rx.icon("upload"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
                     content="Exportar CSV"
-
+    
                 ),
-
+    
                 rx.button(rx.icon("save"), "Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos, color_scheme="blue",justify_self="end", flex="1", variant="soft"),
                 width="100%",
             ),
             
         
             modal_edicao_ativo(),
-            width="35%",
+            width="100%",
+            value="ativos",
         ),
+
+    def tab_gerenciar_grupos() -> rx.Component:
+        return rx.tabs.content(
+            rx.dialog.title("Gerenciar Grupos de Ativos", padding_top="1em"),
+            rx.dialog.description("Organize seus ativos em grupos para facilitar o monitoramento."),
+    
+            rx.divider(margin_y="1em"),
+    
+            rx.scroll_area(
+                rx.vstack(
+                    rx.foreach(
+                        ConfigState.grupos, 
+                        lambda g: rx.card(
+                            rx.hstack(
+                                rx.vstack(
+                                    rx.hstack(
+                                        rx.text(g["nome"], weight="bold"),
+                                        rx.cond(g["ininterrupto"], rx.tooltip(rx.icon("clock-fading", size=16), content="Este grupo é ininterrupto")),
+                                        width="100%",
+                                        align_items="center",
+                                        spacing="1"
+                                    ),
+    
+                                    rx.text(f"Ativos: {g['total']}", size="1", color="gray"),
+                                    width="100%",
+                                    spacing="0",
+                                ),
+                                
+                                rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_grupo(g["nome"]), color_scheme="red", variant="ghost"),
+                                width="100%",
+                                align_items="center",
+                            ),
+                            border_left=f"4px solid var(--{g["cor"]}-9)",
+                            width="100%",
+                        )
+                    ),
+                    spacing="2",
+                    padding_right="0.1em",
+                ),
+    
+                type="scroll",
+                style={"max_height": "40vh"},
+            ),
+    
+            rx.divider(margin_y="1em"),
+
+            rx.alert_dialog.root(
+                rx.alert_dialog.trigger(
+                    rx.button(
+                        rx.icon("plus"),
+                        "Adicionar Grupo",
+                        color_scheme="green",
+                        variant="soft",
+                        width="100%",
+                    )
+                ),
+
+                rx.alert_dialog.content(
+                    rx.vstack(
+                        rx.hstack(
+                            rx.input(
+                                rx.input.slot(rx.icon("tag")),
+                                type="text",
+                                placeholder="Novo Grupo",
+                                value=ConfigState.novo_grupo_input,
+                                on_change=ConfigState.set_novo_grupo_input,
+                                flex="1",
+                            ),
+    
+                            rx.select.root(
+                                rx.select.trigger(placeholder="Cor destaque"),
+                                rx.select.content(
+                                    rx.foreach(
+                                            radix_colors, 
+                                            lambda cor: 
+                                            rx.select.item(rx.badge(cor.capitalize(), color_scheme=cor), value=cor)
+                                        ),
+                                ),
+                                default_value=ConfigState.novo_grupo_cor_input,
+                                on_change=ConfigState.set_novo_grupo_cor_input
+                            ),
+    
+                            spacing="1",
+                        width="100%",
+                        ),
+    
+                        rx.tooltip(
+                            rx.checkbox(
+                                "Ininterrupto",
+                                size="2",
+                                checked=ConfigState.novo_grupo_ininterrupto_input,
+                                on_change=ConfigState.set_novo_grupo_ininterrupto_input
+                            ),
+                            content="Ativo que sempre deve estar ligado. O sistema enviará alertas mais frequentes se um ativo ininterrupto ficar offline.",
+                        ),
+    
+                        rx.hstack(
+                            rx.button(rx.icon("plus"), "Adicionar", on_click=ConfigState.adicionar_grupo, color_scheme="green", variant="soft", flex="1"),
+
+                            rx.alert_dialog.cancel(
+                                rx.button("Cancelar", color_scheme="gray", variant="soft")
+                            ),
+    
+                            spacing="1",
+                            width="100%"
+                        )                
+                    ),
+                    width="25%",
+                ),
+            ),
+    
+            width="100%",
+            value="grupos"
+        ),
+
+    return rx.dialog.root(
+        rx.dialog.trigger(
+            rx.button(
+                rx.icon("server"),
+                "Gerenciar Ativos",
+                color_scheme="blue",
+                variant="surface",
+                disabled=AppState.monitorando,
+                width="100%",
+                justify_content="start",
+            )
+        ),
+
+        rx.dialog.content(
+           rx.tabs.root(
+                rx.tabs.list(
+                    rx.tabs.trigger("Ativos", value="ativos"),
+                    rx.tabs.trigger("Grupos", value="grupos"),
+                    width="100%",
+                ),
+
+                tab_gerenciar_ativos(),
+                tab_gerenciar_grupos(),
+            ),
+            width="35%",
+        ), 
     ),
 
 # --- CAIXA/ABA DE CONFIGURAÇÕES DE USUÁRIOS ---
