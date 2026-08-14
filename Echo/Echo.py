@@ -928,6 +928,11 @@ def configurações_ativos() -> rx.Component:
                 ),
 
                 rx.alert_dialog.content(
+                    rx.alert_dialog.title("Adicionar Novo Grupo"),
+                    rx.alert_dialog.description("Preencha os detalhes do novo grupo."),
+
+                    rx.divider(margin_y="1em"),
+
                     rx.vstack(
                         rx.hstack(
                             rx.input(
