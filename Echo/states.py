@@ -19,11 +19,10 @@ import pydantic
 _config_path = "config.env"
 _ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_ping")
 
-# Criação do arquivo config.env se não existir
 if not os.path.exists(_config_path):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [CONFIG] Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
     with open(_config_path, "w", encoding="utf-8") as f:
-        f.write("# Configurações de email\nSMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=suasenha\n# Configurações de monitoramento\nINTERVALO_SEGUNDOS=10\nLIMITE_LATENCIA_MS=100\nPINGS_MAXIMOS=12\nFREQUENCIA_EMAILS=60")
+        f.write("# Configurações de email\nSMTP_SERVER=mail.seudominio.com.br\nSMTP_PORT=465\nSMTP_LOGIN=alertas@seudominio.com.br\nSMTP_PASSWORD=suasenha\n# Configurações de monitoramento\nINTERVALO_SEGUNDOS=10\nLIMITE_LATENCIA_MS=100\nPINGS_MAXIMOS=12\nFREQUENCIA_EMAILS=60\n# Dias de operação (1=Segunda ... 7=Domingo)\nDIAS_OPERACAO=1,2,3,4,5,6")
 
 load_dotenv(_config_path, override=True)
 
@@ -250,6 +249,7 @@ class AppState(rx.SharedState):
     _ram_limite_ms: int = 100
     _ram_max_pings: int = 12
     _ram_freq_emails: int = 60
+    _ram_dias_operacao: list[int] = [1, 2, 3, 4, 5, 6]
 
     ultimo_ping: float = 0.0  # Timestamp do último ciclo completo
 
@@ -322,6 +322,9 @@ class AppState(rx.SharedState):
         self._ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
         self._ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
         self._ram_freq_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
+        self._ram_dias_operacao = [
+            int(d) for d in os.environ.get("DIAS_OPERACAO", "1,2,3,4,5,6").split(",") if d
+        ]
 
     @rx.event
     async def conectar_painel(self):
@@ -589,6 +592,11 @@ class AppState(rx.SharedState):
             async with self:
                 if not self.monitorando or self.ciclo != meu_ciclo:
                     return
+
+                dia_hoje = datetime.now().isoweekday()
+                if dia_hoje not in self._ram_dias_operacao:
+                    print(f"[RELATÓRIO] Hoje (dia {dia_hoje}) não é dia de operação. Envio pulado, aguardando próximo ciclo.")
+                    continue
                 
                 snapshot_relatorio = [
                     {
@@ -840,6 +848,9 @@ class ConfigState(rx.State):
     novo_grupo_ininterrupto_input: bool = False
     cor_grupo_atual: str = "gray"
 
+    dias_operacao: list[int] = [int(d) for d in os.environ.get("DIAS_OPERACAO", "1,2,3,4,5,6").split(",") if d]
+    dias_operacao_buffer: list[int] = dias_operacao.copy()
+
     # --- Dicionários de Configuração ---
     config: dict[str, str | int]  = {
         "smtp_server": os.environ.get("SMTP_SERVER", ""), 
@@ -849,7 +860,7 @@ class ConfigState(rx.State):
         "intervalo_segundos": int(os.environ.get("INTERVALO_SEGUNDOS", 10)),
         "limite_latencia_ms": int(os.environ.get("LIMITE_LATENCIA_MS", 100)),
         "pings_maximos": int(os.environ.get("PINGS_MAXIMOS", 12)),
-        "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60))
+        "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60)),
     }
     config_buffer: dict[str, str | int] = config.copy()
 
@@ -869,9 +880,21 @@ class ConfigState(rx.State):
             "intervalo_segundos": int(os.environ.get("INTERVALO_SEGUNDOS", 10)),
             "limite_latencia_ms": int(os.environ.get("LIMITE_LATENCIA_MS", 100)),
             "pings_maximos": int(os.environ.get("PINGS_MAXIMOS", 12)),
-            "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60))
+            "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60)),
         }
         self.config_buffer: dict[str, str | int] = self.config.copy()
+        self.dias_operacao = [int(d) for d in os.environ.get("DIAS_OPERACAO", "1,2,3,4,5,6").split(",") if d]
+        self.dias_operacao_buffer = self.dias_operacao.copy()
+
+    @rx.event
+    def alternar_dia_operacao(self, dia: int):
+        """Liga/desliga um dia da semana na rotina de envio de relatórios."""
+        dias_atuais = list(self.dias_operacao_buffer)
+        if dia in dias_atuais:
+            dias_atuais.remove(dia)
+        else:
+            dias_atuais.append(dia)
+        self.dias_operacao_buffer = sorted(dias_atuais)
 
     @rx.event
     def atualizar_buffer(self, chave: str, valor: str):
@@ -898,9 +921,11 @@ class ConfigState(rx.State):
         set_key(_config_path, "LIMITE_LATENCIA_MS", str(self.config_buffer["limite_latencia_ms"]))
         set_key(_config_path, "PINGS_MAXIMOS", str(self.config_buffer["pings_maximos"]))
         set_key(_config_path, "FREQUENCIA_EMAILS", str(self.config_buffer["frequencia_emails"]))
+        set_key(_config_path, "DIAS_OPERACAO", ",".join(str(d) for d in self.dias_operacao_buffer))
 
         # Atualiza a tela privada do usuário que acabou de clicar
         self.config = self.config_buffer.copy()
+        self.dias_operacao = self.dias_operacao_buffer.copy()
 
         # Retorna o aviso de sucesso e o "Gatilho" para atualizar a RAM do Servidor Global
         return [

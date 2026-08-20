@@ -3,6 +3,8 @@ from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserMa
 
 radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'brown', 'orange', 'sky', 'mint', 'lime', 'yellow', 'amber', 'gold', 'bronze', 'gray']
 
+DIAS_SEMANA = [(1, "Seg"), (2, "Ter"), (3, "Qua"), (4, "Qui"), (5, "Sex"), (6, "Sáb"), (7, "Dom")]
+
 # --- CARD DE ATIVO ---
 def renderizar_card(ativo: AtivoRede):
     cor_status = rx.cond(ativo.status == "Online", "green",
@@ -327,6 +329,33 @@ def configurações_gerais() -> rx.Component:
         
                 rx.scroll_area(
                     rx.vstack(
+                        rx.text("Dias de Envio do Relatório", weight="bold"),
+                        rx.text(
+                            "O relatório periódico só é disparado nos dias marcados. Alertas de ativos críticos (ininterruptos) continuam valendo todos os dias.",
+                            size="1", color="gray"
+                        ),
+                        rx.flex(
+                            *[
+                                rx.button(
+                                    label,
+                                    on_click=ConfigState.alternar_dia_operacao(numero),
+                                    variant=rx.cond(
+                                        ConfigState.dias_operacao_buffer.contains(numero),
+                                        "solid", "soft"
+                                    ),
+                                    color_scheme="purple",
+                                    size="1",
+                                    flex="1",
+                                )
+                                for numero, label in DIAS_SEMANA
+                            ],
+                            spacing="2",
+                            wrap="wrap",
+                            width="100%",
+                        ),
+
+                        rx.divider(margin_y=".5em"),
+
                         # SEÇÃO 1: SERVIDOR DE E-MAIL
                         rx.text("Servidor de E-mail (SMTP)", weight="bold", padding_top="0.5em"),
                         rx.hstack(
@@ -452,6 +481,7 @@ def configurações_gerais() -> rx.Component:
             rx.divider(margin_y="1em"),
             
             rx.button(
+                rx.icon("save"),
                 "Salvar Alterações", 
                 on_click=ConfigState.salvar_configs_env, 
                 color_scheme="purple",
