@@ -438,7 +438,7 @@ class AppState(rx.SharedState):
                             return "vivo", round(resultado.avg_rtt, 1)
                         return "morto", 0.0
                     except Exception as e:
-                        print(f"[PING] Erro ao pingar {ip}: {e}")
+                        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [PING] Erro ao pingar {ip}: {e}")
                         return "morto", 0.0
     
                 resultados = await asyncio.gather(*[
@@ -544,10 +544,10 @@ class AppState(rx.SharedState):
                 await asyncio.sleep(intervalo)
     
             except asyncio.CancelledError:
-                print("[MOTOR] Task cancelada pelo Reflex. Encerrando loop.")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [MOTOR] Task cancelada pelo Reflex. Encerrando loop.")
                 break
             except Exception as e:
-                print(f"[MOTOR] Erro inesperado no ciclo de monitoramento: {e}")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [MOTOR] Erro inesperado no ciclo de monitoramento: {e}")
                 await asyncio.sleep(5) 
                 continue
     
@@ -585,7 +585,7 @@ class AppState(rx.SharedState):
 
                 dia_hoje = datetime.now().isoweekday()
                 if dia_hoje not in self._ram_dias_operacao:
-                    print(f"[RELATÓRIO] Hoje (dia {dia_hoje}) não é dia de operação. Envio pulado, aguardando próximo ciclo.")
+                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Hoje (dia {dia_hoje}) não é dia de operação. Envio pulado, aguardando próximo ciclo.")
                     continue
                 
                 snapshot_relatorio = [
@@ -636,7 +636,7 @@ class AppState(rx.SharedState):
                     )
                     for s in snapshot_relatorio
                 ]
-                print("[RELATORIO] Histórico de todos os ativos resetado após envio do relatório.")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATORIO] Histórico de todos os ativos resetado após envio do relatório.")
 
     @rx.event(background=True)
     async def loop_watchdog(self):
@@ -657,7 +657,7 @@ class AppState(rx.SharedState):
 
                 # Se passou mais de 3x o intervalo sem ping, reinicia o loop
                 if self.ultimo_ping > 0 and tempo_desde_ultimo > (intervalo * 3):
-                    print(f"[WATCHDOG] Loop travado há {tempo_desde_ultimo:.0f}s. Reiniciando...")
+                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [WATCHDOG] Loop travado há {tempo_desde_ultimo:.0f}s. Reiniciando...")
                     async with self:
                         self.ciclo += 1
                         meu_ciclo = self.ciclo
@@ -671,7 +671,7 @@ class AppState(rx.SharedState):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[WATCHDOG] Erro: {e}")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [WATCHDOG] Erro: {e}")
                 await asyncio.sleep(10)
 
 # 2. ESTADO DE AUTENTICAÇÃO
@@ -751,13 +751,13 @@ class AuthState(rx.State):
         with rx.session() as session:
             # Se não existe NENHUM usuário no banco, força a ir para a tela de Setup
             if not session.exec(User.select()).first():
-                print("[AUTENTICAÇÃO] Nenhum usuário encontrado no banco de dados. Redirecionando para a tela de configuração inicial.")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [AUTENTICAÇÃO] Nenhum usuário encontrado no banco de dados. Redirecionando para a tela de configuração inicial.")
                 self.usuario_logado, self.token_logado = "", ""
                 return rx.redirect("/setup")
                 
             # Se existem usuários, mas o navegador não tem sessão, vai pro Login
             if not self.usuario_logado or not self.token_logado:
-                print("[AUTENTICAÇÃO] Acesso negado: Nenhuma sessão ativa encontrada no navegador.")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [AUTENTICAÇÃO] Acesso negado: Nenhuma sessão ativa encontrada no navegador.")
                 return rx.redirect("/login")
     
             user = session.exec(User.select().where(User.username == self.usuario_logado)).first()
@@ -766,13 +766,13 @@ class AuthState(rx.State):
                 # O PULO DO GATO: Se o token do navegador for diferente do banco, 
                 # significa que outro PC fez login com essa conta depois de nós!
                 if user.session_token != self.token_logado:
-                    print("[AUTENTICAÇÃO] Acesso negado: Token de sessão inválido. Outro login detectado para este usuário.")
+                    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [AUTENTICAÇÃO] Acesso negado: Token de sessão inválido. Outro login detectado para este usuário.")
                     self.usuario_logado, self.token_logado = "", ""   
                     return rx.redirect("/login")
 
                 self.role_logado = user.role
             else:
-                print("[AUTENTICAÇÃO] Acesso negado: Usuário não encontrado no banco de dados.")
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [AUTENTICAÇÃO] Acesso negado: Usuário não encontrado no banco de dados.")
                 self.usuario_logado, self.token_logado = "", ""
                 return rx.redirect("/login")
 
