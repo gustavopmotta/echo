@@ -97,6 +97,9 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
     status_filtro = MonitoramentoState.filtro_status.get(resumo.nome, "Todos")
     sem_resultado = MonitoramentoState.nenhum_resultado.get(resumo.nome, False)
 
+    campo_ordenacao = MonitoramentoState.ordenacao_campo.get(resumo.nome, "nome")
+    direcao_ordenacao = MonitoramentoState.ordenacao_direcao.get(resumo.nome, "asc")
+
     def badge_filtro(label: str, contador, cor: str, chave_status: str):
         ativo_selecionado = status_filtro == chave_status
         return rx.badge(
@@ -107,6 +110,25 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
             on_click=MonitoramentoState.alternar_filtro_status(resumo.nome, chave_status),
         )
 
+    def item_ordenacao(label: str, campo: str) -> rx.Component:
+        selecionado = campo_ordenacao == campo
+        return rx.menu.item(
+            rx.hstack(
+                rx.text(label),
+                rx.spacer(),
+                rx.cond(
+                    selecionado,
+                    rx.icon(
+                        rx.cond(direcao_ordenacao == "asc", "arrow_up", "arrow_down"),
+                        size=14,
+                    ),
+                ),
+                width="100%",
+                align_items="center",
+            ),
+            on_click=MonitoramentoState.set_ordenacao(resumo.nome, campo),
+        )
+
     def card_filtravel(ativo: AtivoRede):
         passa_busca = (
             (termo_busca == "")
@@ -114,7 +136,14 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
             | ativo.ip.contains(termo_busca)
         )
         passa_status = (status_filtro == "Todos") | (ativo.status == status_filtro)
-        return rx.cond(passa_busca & passa_status, renderizar_card(ativo), rx.fragment())
+
+        posicao = MonitoramentoState.ordem_ativos.get(resumo.nome, {}).get(ativo.ip, 0)
+
+        return rx.cond(
+            passa_busca & passa_status,
+            rx.box(renderizar_card(ativo), style={"order": posicao}, width="100%"),
+            rx.fragment(),
+        )
 
     return rx.card(
         rx.vstack(
@@ -146,16 +175,37 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
 
             rx.divider(margin_y="0.25em"),
 
-            rx.debounce_input(
-                rx.input(
-                    rx.input.slot(rx.icon("search", size=14)),
-                    placeholder=f"Buscar em {resumo.nome}...",
-                    value=termo_busca,
-                    on_change=lambda v: MonitoramentoState.set_busca_grupo(resumo.nome, v),
-                    size="2",
-                    width="100%",
+            rx.hstack(
+                rx.debounce_input(
+                    rx.input(
+                        rx.input.slot(rx.icon("search", size=14)),
+                        placeholder=f"Buscar em {resumo.nome}...",
+                        value=termo_busca,
+                        on_change=lambda v: MonitoramentoState.set_busca_grupo(resumo.nome, v),
+                        size="1",
+                        width="100%",
+                    ),
+                    debounce_timeout=250,
                 ),
-                debounce_timeout=250,
+
+                rx.menu.root(
+                    rx.menu.trigger(
+                        rx.icon_button(
+                            rx.icon("arrow_up_down", size=14),
+                            variant="soft",
+                            color_scheme="gray",
+                            size="1",
+                        )
+                    ),
+                    rx.menu.content(
+                        item_ordenacao("Nome", "nome"),
+                        item_ordenacao("IP", "ip"),
+                        item_ordenacao("Localização", "local"),
+                    ),
+                ),
+
+                spacing="2",
+                width="100%",
             ),
 
             rx.scroll_area(

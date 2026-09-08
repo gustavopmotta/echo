@@ -4,7 +4,7 @@ from email.mime.text import MIMEText
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv, set_key
 from sqlmodel import Field
-import os, asyncio, reflex as rx, icmplib, smtplib, bcrypt, uuid, csv, io, time, pydantic
+import os, asyncio, reflex as rx, icmplib, smtplib, bcrypt, uuid, csv, io, time, pydantic, ipaddress, unicodedata
 
 _config_path = "config.env"
 _ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_ping")
@@ -218,6 +218,25 @@ def carregar_emails():
         lista_emails = [u.email for u in usuarios if u.email]
         
         return lista_emails
+
+def _chave_ordenacao(ativo: AtivoRede, campo: str):
+    """Gera a chave de comparação certa pra cada tipo de campo — IP precisa de ordenação numérica, não alfabética."""
+    
+    def _remover_acentos(texto: str) -> str:
+        """Remove acentuação pra fins de comparação/ordenação, sem alterar o texto original exibido."""
+        forma_decomposta = unicodedata.normalize("NFKD", texto)
+        return "".join(c for c in forma_decomposta if not unicodedata.combining(c))
+
+    if campo == "ip":
+        try:
+            return ipaddress.ip_address(ativo.ip)
+        except ValueError:
+            return ipaddress.ip_address("255.255.255.255")
+    elif campo == "local":
+        return _remover_acentos(ativo.local.lower())
+    return _remover_acentos(ativo.nome.lower())
+
+
 
 # 1. ESTADO BASE
 class AppState(rx.SharedState):
@@ -1023,6 +1042,29 @@ class MonitoramentoState(rx.State):
     nenhum_resultado: dict[str, bool] = {}
     busca_gerenciamento: str = ""
 
+    ordenacao_campo: dict[str, str] = {}      # {grupo: "nome" | "ip" | "local"}
+    ordenacao_direcao: dict[str, str] = {}    # {grupo: "asc" | "desc"}
+    ordem_ativos: dict[str, dict[str, int]] = {}  # {grupo: {ip: posição}}
+
+    async def _recalcular_ordem(self, grupo: str):
+        """Recalcula a posição de cada ativo do grupo conforme o campo/direção escolhidos."""
+        sala = await self.get_state(AppState)
+        campo = self.ordenacao_campo.get(grupo, "nome")
+        direcao = self.ordenacao_direcao.get(grupo, "asc")
+
+        ativos_do_grupo = [
+            a for a in sala._ativos_live
+            if (a.grupo or "GERAL") == grupo
+        ]
+
+        ordenados = sorted(
+            ativos_do_grupo,
+            key=lambda a: _chave_ordenacao(a, campo),
+            reverse=(direcao == "desc"),
+        )
+
+        self.ordem_ativos[grupo] = {a.ip: posicao for posicao, a in enumerate(ordenados)}
+
     async def _recalcular_visibilidade(self, grupo: str):
         """Verifica se algum ativo do grupo ainda passa na busca + filtro de status atuais."""
         sala = await self.get_state(AppState)
@@ -1041,6 +1083,20 @@ class MonitoramentoState(rx.State):
         )
 
         self.nenhum_resultado[grupo] = not algum_visivel
+
+    @rx.event
+    async def set_ordenacao(self, grupo: str, campo: str):
+        """Clica no mesmo campo = inverte a direção. Clica em campo novo = define ele como 'asc'."""
+        campo_atual = self.ordenacao_campo.get(grupo, "nome")
+        direcao_atual = self.ordenacao_direcao.get(grupo, "asc")
+
+        if campo == campo_atual:
+            self.ordenacao_direcao[grupo] = "desc" if direcao_atual == "asc" else "asc"
+        else:
+            self.ordenacao_campo[grupo] = campo
+            self.ordenacao_direcao[grupo] = "asc"
+
+        await self._recalcular_ordem(grupo)
 
     @rx.event
     def set_busca_gerenciamento(self, valor: str):
