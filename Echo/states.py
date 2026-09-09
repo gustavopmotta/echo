@@ -4,10 +4,11 @@ from email.mime.text import MIMEText
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv, set_key
 from sqlmodel import Field
-import os, asyncio, reflex as rx, icmplib, smtplib, bcrypt, uuid, csv, io, time, pydantic, ipaddress, unicodedata
+import os, asyncio, reflex as rx, icmplib, smtplib, bcrypt, uuid, csv, io, time, pydantic, ipaddress, unicodedata, html
 
 _config_path = "config.env"
 _ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_ping")
+COOLDOWN_RELATORIO_SEGUNDOS = 300
 
 if not os.path.exists(_config_path):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [CONFIG] Arquivo config.env nao encontrado. Criando arquivo de exemplo...")
@@ -69,7 +70,6 @@ class GrupoDB(rx.Model, table=True):
     cor: str = "gray" # Cor padrão, pode ser personalizada
 
 def disparar_relatorio(ativos: list[AtivoRede]):
-    # Travas de segurança: não tenta enviar se faltar dados
     if not carregar_emails():
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
         return
@@ -78,126 +78,221 @@ def disparar_relatorio(ativos: list[AtivoRede]):
         return
 
     load_dotenv(_config_path, override=True)
-
-    # Puxa as configurações do .env (já carregadas no topo do seu código)
     servidor = os.environ.get("SMTP_SERVER")
     porta = int(os.environ.get("SMTP_PORT", 465))
     login = os.environ.get("SMTP_LOGIN")
     senha = os.environ.get("SMTP_PASSWORD")
 
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Montando relatório de ativos em HTML...")
-    
-    # 1. Constrói as linhas da tabela dinamicamente com base nos ativos
+
+    # --- Contagem para o resumo do topo ---
+    total_online = sum(1 for a in ativos if a.status == "Online")
+    total_lento = sum(1 for a in ativos if a.status == "Lento")
+    total_offline = sum(1 for a in ativos if a.status == "Offline")
+
+    def badge_status(status: str) -> str:
+        cores = {
+            "Online": ("#e6f7ed", "#1a7f4f"),
+            "Lento": ("#fff4e5", "#b56a00"),
+            "Offline": ("#fdecec", "#c0392b"),
+        }
+        bg, texto = cores.get(status, ("#f0f0f0", "#666"))
+        return f'<span style="background:{bg};color:{texto};padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">{status}</span>'
+
     linhas_tabela = ""
     for ativo in ativos:
-        # Define a cor do texto dependendo do status atual
-        cor_status = "green" if ativo.status == "Online" else "orange" if ativo.status == "Lento" else "red"
-        
+        nome_ativo = html.escape(ativo.nome)
+        ip_ativo = html.escape(ativo.ip)
+        local_ativo = html.escape(ativo.local)
+        total_pings = ativo.total_pings if ativo.total_pings > 0 else 1
+        latencia_media = ativo.total_latencia / total_pings if total_pings > 0 else 0
+
         linhas_tabela += f"""
         <tr>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;"><b>{ativo.nome}</b></td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.ip}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.local}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee; color: {cor_status}; font-weight: bold;">{ativo.status}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #eee;">{ativo.total_latencia / ativo.total_pings if ativo.total_pings > 0 else 0:.1f} ms</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;font-weight:600;color:#1a1a2e;">{nome_ativo}</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;color:#5a6472;font-family:monospace;">{ip_ativo}</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;color:#5a6472;">{local_ativo}</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;">{badge_status(ativo.status)}</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;color:#1a1a2e;text-align:right;font-weight:600;">{latencia_media:.1f} ms</td>
         </tr>
         """
 
-    # 2. Constrói a casca do e-mail com a tabela dentro
+    def card_resumo(valor: int, label: str, cor: str) -> str:
+        return f"""
+        <td style="padding:0 6px;" width="25%">
+            <table cellpadding="0" cellspacing="0" width="100%" style="background:#f8f9fb;border-radius:10px;">
+                <tr><td style="padding:16px;text-align:center;">
+                    <div style="font-size:26px;font-weight:700;color:{cor};line-height:1;">{valor}</div>
+                    <div style="font-size:12px;color:#8a94a3;margin-top:6px;text-transform:uppercase;letter-spacing:0.5px;">{label}</div>
+                </td></tr>
+            </table>
+        </td>
+        """
+
     corpo_html = f"""
     <html>
-        <body style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
-            <h2 style="color: #0056b3;">Echo - Relatório de Latencia</h2>
-            <p>Segue teste de latencia média de ativos:</p>
-            
-            <table style="border-collapse: collapse; width: 100%; max-width: 800px; text-align: left; margin-top: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-                <tr style="background-color: #f4f6f8;">
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Nome do Equipamento</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Endereço IP</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Localização</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Status Atual</th>
-                    <th style="padding: 12px; border-bottom: 2px solid #ccc;">Latência (Média)</th>
+        <body style="margin:0;padding:0;background:#f2f4f7;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <table cellpadding="0" cellspacing="0" width="100%" style="background:#f2f4f7;padding:32px 0;">
+                <tr>
+                    <td align="center">
+                        <table cellpadding="0" cellspacing="0" width="640" style="background:#ffffff;border-radius:14px;overflow:hidden;">
+
+                            <!-- Cabeçalho -->
+                            <tr>
+                                <td style="background:#1a1a2e;padding:28px 32px;">
+                                    <span style="color:#ffffff;font-size:20px;font-weight:700;letter-spacing:0.5px;">ECHO</span>
+                                    <div style="color:#9aa5b1;font-size:13px;margin-top:4px;">Relatório periódico de latência da rede</div>
+                                </td>
+                            </tr>
+
+                            <!-- Cards de resumo -->
+                            <tr>
+                                <td style="padding:24px 26px 8px 26px;">
+                                    <table cellpadding="0" cellspacing="0" width="100%">
+                                        <tr>
+                                            {card_resumo(len(ativos), "Total", "#1a1a2e")}
+                                            {card_resumo(total_online, "Online", "#1a7f4f")}
+                                            {card_resumo(total_lento, "Lento", "#b56a00")}
+                                            {card_resumo(total_offline, "Offline", "#c0392b")}
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+
+                            <!-- Tabela detalhada -->
+                            <tr>
+                                <td style="padding:16px 26px 32px 26px;">
+                                    <table cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+                                        <tr>
+                                            <th style="padding:10px 16px;text-align:left;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">Equipamento</th>
+                                            <th style="padding:10px 16px;text-align:left;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">IP</th>
+                                            <th style="padding:10px 16px;text-align:left;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">Local</th>
+                                            <th style="padding:10px 16px;text-align:left;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">Status</th>
+                                            <th style="padding:10px 16px;text-align:right;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">Latência</th>
+                                        </tr>
+                                        {linhas_tabela}
+                                    </table>
+                                </td>
+                            </tr>
+
+                            <!-- Rodapé -->
+                            <tr>
+                                <td style="padding:20px 32px;background:#f8f9fb;border-top:1px solid #edf0f3;">
+                                    <span style="font-size:12px;color:#8a94a3;">Mensagem gerada automaticamente pelo painel de monitoramento Echo.</span>
+                                </td>
+                            </tr>
+
+                        </table>
+                    </td>
                 </tr>
-                {linhas_tabela}
             </table>
-            
-            <p style="margin-top: 30px; font-size: 12px; color: #777;">
-                Mensagem gerada automaticamente pelo painel de monitoramento Echo.
-            </p>
         </body>
     </html>
     """
 
-    # 3. Configura os cabeçalhos do e-mail
     msg = MIMEMultipart()
     msg['Subject'] = "Echo: Status Atual da Rede (Teste de Latência)"
     msg['From'] = login
     msg['To'] = ", ".join(carregar_emails())
     msg.attach(MIMEText(corpo_html, 'html'))
 
-    # 4. Conecta no servidor e faz o disparo
     try:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Conectando ao servidor SMTP {servidor} via SSL...")
         server = smtplib.SMTP_SSL(servidor, porta)
         server.login(login, senha)
         server.sendmail(login, carregar_emails(), msg.as_string())
         server.quit()
-        
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] E-mail de relatório enviado e entregue com sucesso!")
+        return True
     except Exception as e:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Falha crítica ao enviar o e-mail: {e}")
+        return False
 
 def disparar_alerta_offline(ativos_criticos: list[AtivoRede]):
     if not ativos_criticos:
         return
 
     load_dotenv(_config_path, override=True)
-    servidor=os.environ.get("SMTP_SERVER")
-    porta=int(os.environ.get("SMTP_PORT", 465))
-    login=os.environ.get("SMTP_LOGIN")
-    senha=os.environ.get("SMTP_PASSWORD")
+    servidor = os.environ.get("SMTP_SERVER")
+    porta = int(os.environ.get("SMTP_PORT", 465))
+    login = os.environ.get("SMTP_LOGIN")
+    senha = os.environ.get("SMTP_PASSWORD")
 
     linhas_tabela = ""
     for ativo in ativos_criticos:
+        nome_ativo = html.escape(ativo.nome)
+        ip_ativo = html.escape(ativo.ip)
+        local_ativo = html.escape(ativo.local)
+        grupo_ativo = html.escape(ativo.grupo)
+        pings_offline = ativo.pings_offline
+
         linhas_tabela += f"""
         <tr>
-            <td style="padding:10px;border-bottom:1px solid #eee;"><b>{ativo.nome}</b></td>
-            <td style="padding:10px;border-bottom:1px solid #eee;">{ativo.ip}</td>
-            <td style="padding:10px;border-bottom:1px solid #eee;">{ativo.local}</td>
-            <td style="padding:10px;border-bottom:1px solid #eee;">{ativo.grupo}</td>
-            <td style="padding:10px;border-bottom:1px solid #eee;color:red;font-weight:bold;">
-                Offline ({ativo.pings_offline} pings)
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;font-weight:600;color:#1a1a2e;">{nome_ativo}</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;color:#5a6472;font-family:monospace;">{ip_ativo}</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;color:#5a6472;">{local_ativo}</td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;">
+                <span style="background:#eef0ff;color:#3a3ac2;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">{grupo_ativo}</span>
+            </td>
+            <td style="padding:14px 16px;border-bottom:1px solid #edf0f3;text-align:right;">
+                <span style="background:#fdecec;color:#c0392b;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600;">Offline · {pings_offline} pings</span>
             </td>
         </tr>
         """
 
     corpo_html = f"""
     <html>
-        <body style="font-family:Arial,sans-serif;color:#333;line-height:1.6;">
-            <h2 style="color:#cc0000;">⚠️ Echo — Alerta de Ativos Offline</h2>
-            <p>Os seguintes ativos de grupos críticos (24/7) estão offline:</p>
-            <table style="border-collapse:collapse;width:100%;max-width:800px;margin-top:20px;
-                          text-align:left;box-shadow:0 2px 5px rgba(0,0,0,0.1);">
-                <tr style="background-color:#f4f6f8;">
-                    <th style="padding:12px;border-bottom:2px solid #ccc;">Equipamento</th>
-                    <th style="padding:12px;border-bottom:2px solid #ccc;">IP</th>
-                    <th style="padding:12px;border-bottom:2px solid #ccc;">Localização</th>
-                    <th style="padding:12px;border-bottom:2px solid #ccc;">Grupo</th>
-                    <th style="padding:12px;border-bottom:2px solid #ccc;">Status</th>
+        <body style="margin:0;padding:0;background:#f2f4f7;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <table cellpadding="0" cellspacing="0" width="100%" style="background:#f2f4f7;padding:32px 0;">
+                <tr>
+                    <td align="center">
+                        <table cellpadding="0" cellspacing="0" width="640" style="background:#ffffff;border-radius:14px;overflow:hidden;">
+
+                            <!-- Banner de urgência -->
+                            <tr>
+                                <td style="background:#c0392b;padding:24px 32px;">
+                                    <span style="color:#ffffff;font-size:18px;font-weight:700;">⚠ Ativos críticos offline</span>
+                                    <div style="color:#ffd9d4;font-size:13px;margin-top:4px;">
+                                        {len(ativos_criticos)} ativo(s) de grupo ininterrupto (24/7) sem resposta
+                                    </div>
+                                </td>
+                            </tr>
+
+                            <!-- Tabela -->
+                            <tr>
+                                <td style="padding:24px 26px 32px 26px;">
+                                    <table cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;">
+                                        <tr>
+                                            <th style="padding:10px 16px;text-align:left;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">Equipamento</th>
+                                            <th style="padding:10px 16px;text-align:left;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">IP</th>
+                                            <th style="padding:10px 16px;text-align:left;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">Local</th>
+                                            <th style="padding:10px 16px;text-align:left;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">Grupo</th>
+                                            <th style="padding:10px 16px;text-align:right;font-size:12px;color:#8a94a3;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #edf0f3;">Status</th>
+                                        </tr>
+                                        {linhas_tabela}
+                                    </table>
+                                </td>
+                            </tr>
+
+                            <!-- Rodapé -->
+                            <tr>
+                                <td style="padding:20px 32px;background:#f8f9fb;border-top:1px solid #edf0f3;">
+                                    <span style="font-size:12px;color:#8a94a3;">Alerta gerado automaticamente pelo painel de monitoramento Echo.</span>
+                                </td>
+                            </tr>
+
+                        </table>
+                    </td>
                 </tr>
-                {linhas_tabela}
             </table>
-            <p style="margin-top:30px;font-size:12px;color:#777;">
-                Alerta gerado automaticamente pelo painel Echo.
-            </p>
         </body>
     </html>
     """
 
     msg = MIMEMultipart()
-    msg['Subject']=f"Echo: {len(ativos_criticos)} ativo(s) offline em grupos críticos"
-    msg['From']=login
-    msg['To']=", ".join(carregar_emails())
+    msg['Subject'] = f"Echo: {len(ativos_criticos)} ativo(s) offline em grupos críticos"
+    msg['From'] = login
+    msg['To'] = ", ".join(carregar_emails())
     msg.attach(MIMEText(corpo_html, 'html'))
 
     try:
@@ -236,8 +331,6 @@ def _chave_ordenacao(ativo: AtivoRede, campo: str):
         return _remover_acentos(ativo.local.lower())
     return _remover_acentos(ativo.nome.lower())
 
-
-
 # 1. ESTADO BASE
 class AppState(rx.SharedState):
     """Estado global compartilhado entre todas as páginas, ideal para dados que precisam ser acessados em múltiplas telas."""
@@ -260,7 +353,9 @@ class AppState(rx.SharedState):
     _ram_freq_emails: int = 60
     _ram_dias_operacao: list[int] = [1, 2, 3, 4, 5, 6]
 
-    ultimo_ping: float = 0.0  # Timestamp do último ciclo completo
+    ultimo_ping: float = 0.0
+    enviando_relatorio_manual: bool = False
+    ultimo_envio_manual: float = 0.0
 
     def _recalcular_resumos(self):
         """Função interna que gera a matemática da interface baseada na lista atual."""
@@ -322,6 +417,43 @@ class AppState(rx.SharedState):
                 grupos[nome_grupo] = []
             grupos[nome_grupo].append(ativo)
         return grupos
+
+    @rx.event(background=True)
+    async def enviar_relatorio_manual(self):
+        """Dispara o relatório sob demanda (botão admin). Trava contra clique duplo e aplica cooldown global."""
+        async with self:
+            if self.enviando_relatorio_manual:
+                yield rx.toast.warning("Já existe um envio em andamento.", position="top-right")
+                return
+
+            agora = time.time()
+            tempo_desde_ultimo = agora - self.ultimo_envio_manual
+            if self.ultimo_envio_manual > 0 and tempo_desde_ultimo < COOLDOWN_RELATORIO_SEGUNDOS:
+                restante = int(COOLDOWN_RELATORIO_SEGUNDOS - tempo_desde_ultimo)
+                yield rx.toast.warning(f"Aguarde {restante}s antes de enviar outro relatório manual.", position="top-right")
+                return
+
+            if not self._ativos_live:
+                yield rx.toast.warning("Nenhum ativo cadastrado para gerar o relatório.", position="top-right")
+                return
+
+            # Trava o botão para TODOS os admins conectados enquanto o envio acontece
+            self.enviando_relatorio_manual = True
+            snapshot = [a.model_copy() for a in self._ativos_live]
+
+        yield  # Força o flush do estado agora, pra UI desabilitar o botão antes do envio bloqueante
+
+        loop = asyncio.get_running_loop()
+        sucesso = await loop.run_in_executor(_ping_executor, disparar_relatorio, snapshot)
+
+        async with self:
+            self.enviando_relatorio_manual = False
+            self.ultimo_envio_manual = time.time()
+
+            if sucesso:
+                yield rx.toast.success("Relatório enviado manualmente com sucesso!", position="top-right")
+            else:
+                yield rx.toast.error("Falha ao enviar o relatório. Verifique as configurações de SMTP em Configurações.", position="top-right")
 
     @rx.event
     async def recarregar_configs_da_memoria(self):

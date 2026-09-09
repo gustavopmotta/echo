@@ -1321,6 +1321,24 @@ def controles_sidebar() -> rx.Component:
             ),
         ),
 
+        rx.cond(
+            AuthState.role_logado == "admin",
+            rx.button(
+                rx.cond(
+                    AppState.enviando_relatorio_manual,
+                    rx.spinner(size="1"),
+                    rx.icon("mail"),
+                ),
+                rx.cond(AppState.enviando_relatorio_manual, "Enviando...", "Forçar Relatório"),
+                on_click=AppState.enviar_relatorio_manual,
+                disabled=AppState.enviando_relatorio_manual | ~AppState.monitorando,
+                color_scheme="green",
+                variant="surface",
+                width="100%",
+                justify_content="start",
+            ),
+        ),
+
         configurações_gerais(),
         configurações_ativos(),
         configurações_usuarios(),
