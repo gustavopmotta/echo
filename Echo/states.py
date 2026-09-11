@@ -17,6 +17,7 @@ if not os.path.exists(_config_path):
 
 load_dotenv(_config_path, override=True)
 
+# --- CLASSES ---
 class User(rx.Model, table=True):
     """Tabela para armazenar os usuários no banco de dados SQLite."""
     username: str = Field(index=True, unique=True)
@@ -69,6 +70,7 @@ class GrupoDB(rx.Model, table=True):
     ininterrupto: bool = False
     cor: str = "gray" # Cor padrão, pode ser personalizada
 
+# --- FUNÇÕES GERAIS ---
 def disparar_relatorio(ativos: list[AtivoRede]):
     if not carregar_emails():
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
@@ -331,6 +333,7 @@ def _chave_ordenacao(ativo: AtivoRede, campo: str):
         return _remover_acentos(ativo.local.lower())
     return _remover_acentos(ativo.nome.lower())
 
+# --- ESTADOS ---
 # 1. ESTADO BASE
 class AppState(rx.SharedState):
     """Estado global compartilhado entre todas as páginas, ideal para dados que precisam ser acessados em múltiplas telas."""
@@ -989,6 +992,12 @@ class ConfigState(rx.State):
     novo_grupo_ininterrupto_input: bool = False
     cor_grupo_atual: str = "gray"
 
+    # Variáveis de edição de grupo
+    grupo_edicao: str = ""
+    edit_grupo_nome: str = ""
+    edit_grupo_cor: str = "gray"
+    edit_grupo_ininterrupto: bool = False
+
     dias_operacao: list[int] = [int(d) for d in os.environ.get("DIAS_OPERACAO", "1,2,3,4,5,6").split(",") if d]
     dias_operacao_buffer: list[int] = dias_operacao.copy()
 
@@ -1074,7 +1083,7 @@ class ConfigState(rx.State):
             AppState.recarregar_configs_da_memoria
         ]
 
-    # --- GRUPOS ---
+    # --- CONFIGURAÇÕES DE GRUPOS ---
     @rx.event
     def carregar_grupos(self):
         with rx.session() as session:
@@ -1129,19 +1138,125 @@ class ConfigState(rx.State):
             return rx.toast.warning("Grupo já existe.", position="top-right")
 
     @rx.event
-    def remover_grupo(self, grupo_alvo: str):
-        if grupo_alvo == "Nenhum":
+    async def remover_grupo(self, grupo_alvo: str):
+        if grupo_alvo == "GERAL":
             return rx.toast.error("O grupo padrão não pode ser apagado.", position="top-right")
             
         with rx.session() as session:
             registro = session.exec(GrupoDB.select().where(GrupoDB.nome == grupo_alvo)).first()
 
-            if registro:
-                session.delete(registro)
-                session.commit()
+            if not registro:
+                return rx.toast.error("Grupo não encontrado.", position="top-right")
 
-                self.carregar_grupos()
-                return rx.toast.success(f"Grupo '{grupo_alvo}' removido!", position="top-right")
+            grupo_geral = session.exec(GrupoDB.select().where(GrupoDB.nome == "GERAL")).first()
+            cor_geral = grupo_geral.cor if grupo_geral else "gray"
+            ininterrupto_geral = grupo_geral.ininterrupto if grupo_geral else False
+
+            ativos_orfaos = session.exec(AtivoDB.select().where(AtivoDB.grupo == grupo_alvo)).all()
+            total_migrados = len(ativos_orfaos)
+            for ativo in ativos_orfaos:
+                ativo.grupo = "GERAL"
+                session.add(ativo)
+            
+            session.delete(registro)
+            session.commit()
+
+            self.carregar_grupos()
+
+            sala = await self.get_state(AppState)
+
+            sala.ativos_buffer = [
+                {**item, "grupo": "GERAL", "cor_grupo": cor_geral} if item["grupo"] == grupo_alvo else item
+                for item in sala.ativos_buffer
+            ]
+
+            sala._ativos_live = [
+                a.model_copy(update={"grupo": "GERAL", "cor_grupo": cor_geral, "ininterrupto": ininterrupto_geral})
+                if a.grupo == grupo_alvo else a
+                for a in sala._ativos_live
+            ]
+            sala._recalcular_resumos()
+
+            if total_migrados > 0:
+                return rx.toast.success(f"Grupo '{grupo_alvo}' removido. {total_migrados} ativo(s) movido(s) para GERAL.", position="top-right")
+            return rx.toast.success(f"Grupo '{grupo_alvo}' removido!", position="top-right")
+
+    @rx.event
+    def iniciar_edicao_grupo(self, nome_grupo: str):
+        """Puxa os dados atuais do grupo pro formulário de edição."""
+        for g in self.grupos:
+            if g["nome"] == nome_grupo:
+                self.grupo_edicao = nome_grupo
+                self.edit_grupo_nome = g["nome"]
+                self.edit_grupo_cor = g["cor"]
+                self.edit_grupo_ininterrupto = g["ininterrupto"]
+                break
+
+    @rx.event
+    def cancelar_edicao_grupo(self):
+        self.grupo_edicao = ""
+        self.edit_grupo_nome = ""
+        self.edit_grupo_cor = "gray"
+        self.edit_grupo_ininterrupto = False
+
+    @rx.event
+    async def salvar_edicao_grupo(self):
+        """Salva as mudanças e cascateia nome/cor/ininterrupto pra todo mundo que referencia esse grupo."""
+        nome_antigo = self.grupo_edicao
+        nome_novo = self.edit_grupo_nome.strip().upper()
+        cor_novo = self.edit_grupo_cor
+        ininterrupto_novo = self.edit_grupo_ininterrupto
+
+        if not nome_novo:
+            return rx.toast.warning("O nome do grupo é obrigatório.", position="top-right")
+
+        if nome_antigo == "GERAL" and nome_novo != "GERAL":
+            return rx.toast.error("O grupo padrão 'GERAL' não pode ser renomeado.", position="top-right")
+
+        with rx.session() as session:
+            registro = session.exec(GrupoDB.select().where(GrupoDB.nome == nome_antigo)).first()
+            if not registro:
+                return rx.toast.error("Grupo não encontrado.", position="top-right")
+
+            # Se o nome mudou, garante que não existe outro grupo com esse nome
+            if nome_novo != nome_antigo:
+                conflito = session.exec(GrupoDB.select().where(GrupoDB.nome == nome_novo)).first()
+                if conflito:
+                    return rx.toast.error(f"Já existe um grupo chamado '{nome_novo}'.", position="top-right")
+
+            registro.nome = nome_novo
+            registro.cor = cor_novo
+            registro.ininterrupto = ininterrupto_novo
+            session.add(registro)
+
+            # Cascateia o novo nome pra todos os ativos que pertenciam ao grupo antigo
+            if nome_novo != nome_antigo:
+                ativos_do_grupo = session.exec(AtivoDB.select().where(AtivoDB.grupo == nome_antigo)).all()
+                for ativo in ativos_do_grupo:
+                    ativo.grupo = nome_novo
+                    session.add(ativo)
+
+            session.commit()
+
+        self.carregar_grupos()
+        self.cancelar_edicao_grupo()
+
+        # Sincroniza a Sala Global (buffer + monitoramento ao vivo) sem precisar recarregar a página
+        sala = await self.get_state(AppState)
+
+        sala.ativos_buffer = [
+            {**item, "grupo": nome_novo, "cor_grupo": cor_novo} if item["grupo"] == nome_antigo else item
+            for item in sala.ativos_buffer
+        ]
+
+        sala._ativos_live = [
+            a.model_copy(update={"grupo": nome_novo, "cor_grupo": cor_novo, "ininterrupto": ininterrupto_novo})
+            if a.grupo == nome_antigo else a
+            for a in sala._ativos_live
+        ]
+        sala._recalcular_resumos()
+
+        return rx.toast.success(f"Grupo '{nome_antigo}' atualizado!", position="top-right")
 
 # 4. ESTADO DE MONITORAMENTO
 class MonitoramentoState(rx.State):

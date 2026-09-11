@@ -978,7 +978,15 @@ def configurações_ativos() -> rx.Component:
                                     spacing="0",
                                 ),
                                 
-                                rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_grupo(g["nome"]), color_scheme="red", variant="ghost"),
+                                rx.hstack(
+                                    rx.cond(
+                                        g["nome"] != "GERAL",
+                                        rx.icon_button(rx.icon("pencil"), on_click=ConfigState.iniciar_edicao_grupo(g["nome"]), color_scheme="blue", variant="soft"),
+                                    ),
+                                    
+                                    rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_grupo(g["nome"]), color_scheme="red", variant="soft"),
+                                ),
+                                
                                 width="100%",
                                 align_items="center",
                             ),
@@ -1064,6 +1072,67 @@ def configurações_ativos() -> rx.Component:
                     ),
                     width="25%",
                 ),
+            ),
+
+            rx.alert_dialog.root(
+                rx.alert_dialog.content(
+                    rx.alert_dialog.title("Editar Grupo"),
+                    rx.alert_dialog.description("Atualize nome, cor ou o status de ininterrupção do grupo."),
+
+                    rx.divider(margin_y="1em"),
+
+                    rx.vstack(
+                        rx.hstack(
+                            rx.input(
+                                rx.input.slot(rx.icon("tag")),
+                                value=ConfigState.edit_grupo_nome,
+                                placeholder="Nome do Grupo",
+                                on_change=ConfigState.set_edit_grupo_nome,
+                                flex="1",
+                            ),
+
+                            rx.select.root(
+                                rx.select.trigger(placeholder="Cor destaque"),
+                                rx.select.content(
+                                    rx.foreach(
+                                        radix_colors,
+                                        lambda cor: rx.select.item(rx.badge(cor.capitalize(), color_scheme=cor), value=cor)
+                                    ),
+                                ),
+                                value=ConfigState.edit_grupo_cor,
+                                on_change=ConfigState.set_edit_grupo_cor,
+                            ),
+
+                            width="100%",
+                        ),
+
+                        rx.tooltip(
+                            rx.checkbox(
+                                "Grupo ininterrupto",
+                                checked=ConfigState.edit_grupo_ininterrupto,
+                                on_change=ConfigState.set_edit_grupo_ininterrupto,
+                            ),
+                            content="Ativo que sempre deve estar ligado. O sistema enviará alertas mais frequentes se um ativo ininterrupto ficar offline.",
+                        ),
+
+                        rx.flex(
+                            rx.alert_dialog.cancel(
+                                rx.button("Cancelar", on_click=ConfigState.cancelar_edicao_grupo, color_scheme="gray", variant="soft")
+                            ),
+                            rx.alert_dialog.action(
+                                rx.button("Salvar", on_click=ConfigState.salvar_edicao_grupo, color_scheme="blue", variant="soft")
+                            ),
+                            spacing="3",
+                            justify="end",
+                            width="100%",
+                        ),
+
+                        spacing="3",
+                    ),
+
+                    width="30%",
+                ),
+                open=ConfigState.grupo_edicao != "",
             ),
     
             width="100%",
