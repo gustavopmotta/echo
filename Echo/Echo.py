@@ -25,7 +25,11 @@ def renderizar_card(ativo: AtivoRede):
                         spacing="2",
                         align_items="center",
                     ),
-                    rx.text(f"{ativo.ip} - {ativo.local}", color="gray", size="1"),
+                    rx.hstack(
+                        rx.text(f"{ativo.ip}", color="gray", size="1", transition="filter 0.2s ease", filter="blur(3px)", _hover={"filter": "blur(0px)"}),
+                        rx.text(f"• {ativo.local}", color="gray", size="1"),
+                        spacing="1",
+                    ),
                     spacing="0",
                     align_items="start",
                 ),
@@ -216,7 +220,7 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 ),
                 width="100%",
                 type="scroll",
-                style={"max_height": "22rem"},
+                style={"max_height": "22rem", "min_height": "22rem"},
             ),
 
             rx.cond(
@@ -523,7 +527,7 @@ def configurações_gerais() -> rx.Component:
                         align_items="stretch",
                     ),
                     type="scroll",
-                    style={"max_height": "50vh"}, # Limita a altura para caber em telas menores
+                    style={"max_height": "50vh", "min_height": "50vh"}, # Limita a altura para caber em telas menores
                     padding_right="1em"
                 ),
             ),
@@ -790,7 +794,7 @@ def configurações_ativos() -> rx.Component:
                                     width="100%",
                                 ),
                                 type="scroll",
-                                style={"max_height": "35vh"},
+                                style={"max_height": "35vh", "min_height": "35vh"},
                             ),
 
                             rx.hstack(
@@ -893,7 +897,11 @@ def configurações_ativos() -> rx.Component:
                                                 align_items="center",
                                                 spacing="1"
                                             ),
-                                            rx.text(f"{ativo['ip']} - {ativo['local']}", size="1", color="gray"),
+                                            rx.hstack(
+                                                rx.text(f"{ativo["nome"]}", color="gray", size="1", transition="filter 0.2s ease", filter="blur(3px)", _hover={"filter": "blur(0px)"}),
+                                                rx.text(f"• {ativo["local"]}", color="gray", size="1"),
+                                                spacing="1",
+                                            ),
                                             spacing="0",
                                             align_items="start",
                                             width="100%"
@@ -919,7 +927,7 @@ def configurações_ativos() -> rx.Component:
                     ),
         
                     type="scroll",
-                    style={"max_height": "40vh"},
+                    style={"max_height": "40vh", "min_height": "40vh"},
                     
                 ),
         
@@ -999,7 +1007,7 @@ def configurações_ativos() -> rx.Component:
                 ),
     
                 type="scroll",
-                style={"max_height": "40vh"},
+                style={"max_height": "40vh", "min_height": "40vh"},
             ),
     
             rx.divider(margin_y="1em"),
@@ -1285,7 +1293,7 @@ def configurações_usuarios() -> rx.Component:
                     padding_bottom="1em",
                     padding_right="0.1em",
                 ),
-                type="scroll", style={"max_height": "55vh"}, padding_right="1em"
+                type="scroll", style={"max_height": "55vh", "min_height": "55vh"}, padding_right="1em"
             ),
         
             rx.divider(margin_y="1em"),
@@ -1508,9 +1516,9 @@ def index() -> rx.Component:
 # --- CONFIGURAÇÃO DO APP ---
 app = rx.App()
 # Aciona o on_load e o loop de email no MonitoramentoState
-app.add_page(tela_setup_inicial, route="/setup", title="Configuração Inicial - Echo")
-app.add_page(tela_login, route="/login", title="Login - Echo", on_load=AuthState.checar_acesso_login)
-app.add_page(index, title="Painel - Echo", on_load=[
+app.add_page(tela_setup_inicial, route="/setup", title="Configuração Inicial • Echo")
+app.add_page(tela_login, route="/login", title="Login • Echo", on_load=AuthState.checar_acesso_login)
+app.add_page(index, title="Painel • Echo", on_load=[
     AuthState.verificar_acesso,
     MonitoramentoState.on_load,
     UserManagementState.carregar_usuarios,
