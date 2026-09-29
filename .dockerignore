@@ -1,0 +1,5 @@
+.venv/
+venv/
+.web/
+__pycache__/
+*.db
