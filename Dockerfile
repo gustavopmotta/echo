@@ -1,5 +1,5 @@
 # Usa uma versão oficial e leve do Python
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Instala ferramentas básicas que o Reflex usa nos bastidores
 RUN apt-get update && apt-get install -y curl unzip && rm -rf /var/lib/apt/lists/*
@@ -16,4 +16,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Comando que o container vai rodar ao ligar
-CMD ["reflex", "run", "--env", "prod"]
+CMD ["sh", "-c", "reflex db migrate && reflex run --env prod"]

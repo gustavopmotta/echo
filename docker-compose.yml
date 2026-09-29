@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  echo-app:
+    build: .
+    container_name: echo-app
+    ports:
+      - "3000:3000"   # Porta do Frontend
+      - "8000:8000"   # Porta do Backend (WebSockets)
+    dns:
+      - 192.168.1.1   # Substitua pelo IP do Servidor DNS/Roteador da sua rede
+    dns_search:
+      - empresa.local # Substitua pelo domínio/sufixo DNS local (se houver, ex: .local)
+    environment:
+      - API_URL=http://192.168.X.X:8000  # Substitua pelo IP da sua máquina no ipconfig
+      - DB_URL=sqlite:////app/data/reflex.db
+    volumes:
+      - echo-db:/app/data
+    restart: unless-stopped
+
+volumes:
+  echo-db:
