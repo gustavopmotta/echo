@@ -1,8 +1,12 @@
 # Usa uma versão oficial e leve do Python
-FROM python:3.13-slim
+FROM python:3.13.15-slim
 
 # Instala ferramentas básicas que o Reflex usa nos bastidores
 RUN apt-get update && apt-get install -y curl unzip && rm -rf /var/lib/apt/lists/*
+
+# Instala o Bun oficial e adiciona às variáveis de ambiente (PATH)
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
 
 # Define a pasta de trabalho dentro do container
 WORKDIR /app
