@@ -20,4 +20,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Comando que o container vai rodar ao ligar
-CMD ["sh", "-c", "reflex db migrate && reflex run --env prod"]
+CMD ["sh", "-c", "reflex db migrate && reflex run --env prod --loglevel error"]
