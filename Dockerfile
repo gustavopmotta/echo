@@ -1,5 +1,5 @@
 # Usa uma versão oficial e leve do Python
-FROM python:3.13.15-slim
+FROM python:3.14-slim
 
 # Instala ferramentas básicas que o Reflex usa nos bastidores
 RUN apt-get update && apt-get install -y curl unzip && rm -rf /var/lib/apt/lists/*
@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copia todo o código do seu painel Echo
 COPY . .
+
+# Reflex 0.9+ serve frontend e backend em porta única (3000) no modo prod
+EXPOSE 3000
 
 # Comando que o container vai rodar ao ligar
 CMD ["sh", "-c", "reflex db migrate && reflex run --env prod --loglevel error"]

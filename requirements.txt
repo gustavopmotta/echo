@@ -1,8 +1,4 @@
-alembic
 bcrypt
 icmplib
-pydantic
 python-dotenv
-reflex==0.8.28.post1
-sqlalchemy
-sqlmodel
+reflex[db]==0.11.0

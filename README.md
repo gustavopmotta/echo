@@ -1,7 +1,7 @@
 # ECHO
 
 ![https://www.python.org/downloads/release/python-31315/](https://img.shields.io/badge/3.13.15-3776AB?style=flat-square&logo=python&logoColor=white&label=Python)
-![https://reflex.dev/](https://img.shields.io/badge/0.8.28-6E56CF?style=flat-square&logo=reflex&logoColor=white&label=Reflex)
+![https://reflex.dev/](https://img.shields.io/badge/0.11.0-6E56CF?style=flat-square&logo=reflex&logoColor=white&label=Reflex)
 ![https://reflex.dev/](https://img.shields.io/badge/WSL2-2496ED?style=flat-square&logo=docker&logoColor=white&label=Docker)
 
 ## O que o Echo faz
@@ -59,5 +59,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código da aplicação
 COPY . .
 
+# Reflex 0.9+ executa frontend e backend em porta única (3000) em produção
+EXPOSE 3000
+
 # Executar migração do banco e subir o servidor em produção
 CMD ["sh", "-c", "reflex db migrate && reflex run --env prod"]
+```
+
+> **Nota (Reflex 0.11+):** Em produção (`--env prod`), o Reflex serve frontend e backend na mesma porta (`3000`) por padrão. Caso publique o painel atrás de um proxy/CDN em domínio separado do backend, defina a variável de ambiente `REFLEX_DEPLOY_URL` com a URL pública da aplicação.

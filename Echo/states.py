@@ -1,10 +1,25 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+import asyncio
+import csv
+import html
+import io
+import ipaddress
+import os
+import smtplib
+import time
+import unicodedata
+import uuid
+
+import bcrypt
+import icmplib
+import pydantic
+import reflex as rx
 from dotenv import load_dotenv, set_key
-from sqlmodel import Field
-import os, asyncio, reflex as rx, icmplib, smtplib, bcrypt, uuid, csv, io, time, pydantic, ipaddress, unicodedata, html
+from sqlmodel import Field, SQLModel, select
 
 _config_path = "config.env"
 _ping_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="echo_ping")
@@ -17,15 +32,61 @@ if not os.path.exists(_config_path):
 
 load_dotenv(_config_path, override=True)
 
-# --- CLASSES ---
-class User(rx.Model, table=True):
+# Registra a base SQLModel no ModelRegistry do Reflex (substitui rx.Model, depreciado no 0.9.2+)
+rx.ModelRegistry.register(SQLModel)
+
+
+def _ler_dias_operacao() -> list[int]:
+    return [
+        int(d)
+        for d in os.environ.get("DIAS_OPERACAO", "1,2,3,4,5,6").split(",")
+        if d.strip().isdigit()
+    ]
+
+
+def _ler_config_env() -> dict[str, str | int]:
+    return {
+        "smtp_server": os.environ.get("SMTP_SERVER", ""),
+        "smtp_port": int(os.environ.get("SMTP_PORT", 465)),
+        "smtp_login": os.environ.get("SMTP_LOGIN", ""),
+        "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
+        "intervalo_segundos": int(os.environ.get("INTERVALO_SEGUNDOS", 10)),
+        "limite_latencia_ms": int(os.environ.get("LIMITE_LATENCIA_MS", 100)),
+        "pings_maximos": int(os.environ.get("PINGS_MAXIMOS", 12)),
+        "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60)),
+    }
+
+
+# --- CLASSES DE BANCO (SQLModel direto, compatível com Reflex 0.9–1.0) ---
+class User(SQLModel, table=True):
     """Tabela para armazenar os usuários no banco de dados SQLite."""
+    id: int | None = Field(default=None, primary_key=True)
     username: str = Field(index=True, unique=True)
-    email: str  = Field(index=True, unique=True)
+    email: str = Field(index=True, unique=True)
     password: str
-    role: str = "operador" # "admin" ou "operador"
+    role: str = "operador"  # "admin" ou "operador"
     session_token: str = ""
 
+
+class AtivoDB(SQLModel, table=True):
+    """Tabela para armazenar os ativos de rede no banco de dados SQLite."""
+    id: int | None = Field(default=None, primary_key=True)
+    nome: str
+    ip: str = Field(index=True, unique=True)
+    local: str
+    grupo: str = "GERAL"
+    status: str = "Aguardando..."
+
+
+class GrupoDB(SQLModel, table=True):
+    """Tabela para armazenar grupos no banco de dados SQLite."""
+    id: int | None = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ininterrupto: bool = False
+    cor: str = "gray"  # Cor padrão, pode ser personalizada
+
+
+# --- MODELOS DE DADOS EM MEMÓRIA (Pydantic v2) ---
 class AtivoRede(pydantic.BaseModel):
     """Modelo para representar os ativos de rede em memória durante o monitoramento."""
     nome: str
@@ -39,20 +100,13 @@ class AtivoRede(pydantic.BaseModel):
     pings_online: int = 0
     alerta_enviado: bool = False
     status: str = "Aguardando..."
-    historico: list[dict[str, str | float]] = []
+    historico: list[dict[str, str | float]] = pydantic.Field(default_factory=list)
     total_latencia: float = 0.0
     total_pings: int = 0
 
-class AtivoDB(rx.Model, table=True):
-    """Tabela para armazenar os ativos de rede no banco de dados SQLite."""
-    nome: str
-    ip: str = Field(index=True, unique=True)
-    local: str
-    grupo: str = "GERAL"
-    status: str = "Aguardando..."
 
 class ResumoGrupo(pydantic.BaseModel):
-    """Estrutura de dados perfeita para a gaveta de monitoramento"""
+    """Estrutura de dados para os cards de grupo no dashboard."""
     nome: str
     cor: str = "gray"
     ininterrupto: bool = False
@@ -64,20 +118,24 @@ class ResumoGrupo(pydantic.BaseModel):
     total_pings: int
     ativos_lista: list[AtivoRede]
 
-class GrupoDB(rx.Model, table=True):
-    """Tabela para armazenar grupos no banco de dados SQLite."""
-    nome: str = Field(index=True, unique=True)
+
+class GrupoItem(pydantic.BaseModel):
+    """Estrutura tipada para exibição/edição de grupos na tela de gerenciamento."""
+    nome: str
+    cor: str = "gray"
     ininterrupto: bool = False
-    cor: str = "gray" # Cor padrão, pode ser personalizada
+    total: int = 0
+
 
 # --- FUNÇÕES GERAIS ---
-def disparar_relatorio(ativos: list[AtivoRede]):
-    if not carregar_emails():
+def disparar_relatorio(ativos: list[AtivoRede]) -> bool:
+    destinatarios = carregar_emails()
+    if not destinatarios:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Operação cancelada: Nenhum e-mail cadastrado na lista de envio.")
-        return
+        return False
     if not ativos:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Operação cancelada: Nenhum ativo de rede cadastrado para gerar o relatório.")
-        return
+        return False
 
     load_dotenv(_config_path, override=True)
     servidor = os.environ.get("SMTP_SERVER")
@@ -193,16 +251,16 @@ def disparar_relatorio(ativos: list[AtivoRede]):
     """
 
     msg = MIMEMultipart()
-    msg['Subject'] = "Echo: Status Atual da Rede (Teste de Latência)"
-    msg['From'] = login
-    msg['To'] = ", ".join(carregar_emails())
-    msg.attach(MIMEText(corpo_html, 'html'))
+    msg["Subject"] = "Echo: Status Atual da Rede (Teste de Latência)"
+    msg["From"] = login if login else ""
+    msg["To"] = ", ".join(destinatarios)
+    msg.attach(MIMEText(corpo_html, "html"))
 
     try:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Conectando ao servidor SMTP {servidor} via SSL...")
-        server = smtplib.SMTP_SSL(servidor, porta)
-        server.login(login, senha)
-        server.sendmail(login, carregar_emails(), msg.as_string())
+        server = smtplib.SMTP_SSL(servidor if servidor else "", porta)
+        server.login(login if login else "", senha if senha else "")
+        server.sendmail(login if login else "", destinatarios, msg.as_string())
         server.quit()
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] E-mail de relatório enviado e entregue com sucesso!")
         return True
@@ -210,8 +268,13 @@ def disparar_relatorio(ativos: list[AtivoRede]):
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Falha crítica ao enviar o e-mail: {e}")
         return False
 
+
 def disparar_alerta_offline(ativos_criticos: list[AtivoRede]):
     if not ativos_criticos:
+        return
+
+    destinatarios = carregar_emails()
+    if not destinatarios:
         return
 
     load_dotenv(_config_path, override=True)
@@ -292,33 +355,30 @@ def disparar_alerta_offline(ativos_criticos: list[AtivoRede]):
     """
 
     msg = MIMEMultipart()
-    msg['Subject'] = f"Echo: {len(ativos_criticos)} ativo(s) offline em grupos críticos"
-    msg['From'] = login
-    msg['To'] = ", ".join(carregar_emails())
-    msg.attach(MIMEText(corpo_html, 'html'))
+    msg["Subject"] = f"Echo: {len(ativos_criticos)} ativo(s) offline em grupos críticos"
+    msg["From"] = login if login else ""
+    msg["To"] = ", ".join(destinatarios)
+    msg.attach(MIMEText(corpo_html, "html"))
 
     try:
-        server = smtplib.SMTP_SSL(servidor, porta)
-        server.login(login, senha)
-        server.sendmail(login, carregar_emails(), msg.as_string())
+        server = smtplib.SMTP_SSL(servidor if servidor else "", porta)
+        server.login(login if login else "", senha if senha else "")
+        server.sendmail(login if login else "", destinatarios, msg.as_string())
         server.quit()
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [ALERTA] E-mail de offline disparado para {len(ativos_criticos)} ativo(s).")
     except Exception as e:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [ALERTA] Falha ao enviar e-mail de alerta: {e}")
 
-def carregar_emails():
+
+def carregar_emails() -> list[str]:
     with rx.session() as session:
-        # Puxa todos os usuários do banco
-        usuarios = session.exec(User.select()).all()
-        
-        # Filtra apenas os que têm e-mail preenchido para evitar erros
-        lista_emails = [u.email for u in usuarios if u.email]
-        
-        return lista_emails
+        usuarios = session.exec(select(User)).all()
+        return [u.email for u in usuarios if u.email]
+
 
 def _chave_ordenacao(ativo: AtivoRede, campo: str):
     """Gera a chave de comparação certa pra cada tipo de campo — IP precisa de ordenação numérica, não alfabética."""
-    
+
     def _remover_acentos(texto: str) -> str:
         """Remove acentuação pra fins de comparação/ordenação, sem alterar o texto original exibido."""
         forma_decomposta = unicodedata.normalize("NFKD", texto)
@@ -333,10 +393,11 @@ def _chave_ordenacao(ativo: AtivoRede, campo: str):
         return _remover_acentos(ativo.local.lower())
     return _remover_acentos(ativo.nome.lower())
 
+
 # --- ESTADOS ---
-# 1. ESTADO BASE
+# 1. ESTADO BASE COMPARTILHADO
 class AppState(rx.SharedState):
-    """Estado global compartilhado entre todas as páginas, ideal para dados que precisam ser acessados em múltiplas telas."""
+    """Estado global compartilhado entre todos os clientes conectados à sala central."""
 
     monitorando: bool = False
     _ativos_live: list[AtivoRede] = []
@@ -347,8 +408,6 @@ class AppState(rx.SharedState):
     buffer_iniciado: bool = False
 
     proximo_relatorio: int = 0
-    relatorio_min: str = f"{proximo_relatorio // 60:02d}"
-    relatorio_seg: str = f"{proximo_relatorio % 60:02d}"
 
     _ram_intervalo: int = 10
     _ram_limite_ms: int = 100
@@ -360,49 +419,62 @@ class AppState(rx.SharedState):
     enviando_relatorio_manual: bool = False
     ultimo_envio_manual: float = 0.0
 
+    @rx.var
+    def relatorio_min(self) -> str:
+        return f"{self.proximo_relatorio // 60:02d}"
+
+    @rx.var
+    def relatorio_seg(self) -> str:
+        return f"{self.proximo_relatorio % 60:02d}"
+
     def _recalcular_resumos(self):
         """Função interna que gera a matemática da interface baseada na lista atual."""
-        novos_grupos = {}
+        novos_grupos: dict[str, list[AtivoRede]] = {}
 
         with rx.session() as session:
-            # Atualiza o mapa de cores e ininterrupto dos grupos com base no banco de dados
-            grupos_db = session.exec(GrupoDB.select()).all()
+            grupos_db = session.exec(select(GrupoDB)).all()
+            mapa_cores = {g.nome: g.cor for g in grupos_db}
             mapa_ininterrupto = {g.nome: g.ininterrupto for g in grupos_db}
 
-            for ativo in self._ativos_live:
-                nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
-                if nome_grupo not in novos_grupos:
-                    novos_grupos[nome_grupo] = []
-                novos_grupos[nome_grupo].append(ativo)
+        for ativo in self._ativos_live:
+            nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
+            novos_grupos.setdefault(nome_grupo, []).append(ativo)
 
-            self.ativos_agrupados = novos_grupos
+        lista_resumos = []
+        for nome, ativos_do_grupo in novos_grupos.items():
+            online = sum(1 for a in ativos_do_grupo if a.status == "Online")
+            lentos = sum(1 for a in ativos_do_grupo if a.status == "Lento")
+            offline = sum(1 for a in ativos_do_grupo if a.status == "Offline")
 
-            lista_resumos = []
-            for nome, ativos_do_grupo in novos_grupos.items():
-                online = sum(1 for a in ativos_do_grupo if a.status == "Online")
-                lentos = sum(1 for a in ativos_do_grupo if a.status == "Lento")
-                offline = sum(1 for a in ativos_do_grupo if a.status == "Offline")
+            lats_validas = [a.latencia for a in ativos_do_grupo if a.latencia > 0]
+            media_lat = sum(lats_validas) / len(lats_validas) if lats_validas else 0.0
+            total_pings_grupo = sum(getattr(a, "total_pings", 0) for a in ativos_do_grupo)
 
-                lats_validas = [a.latencia for a in ativos_do_grupo if a.latencia > 0]
-                media_lat = sum(lats_validas) / len(lats_validas) if lats_validas else 0.0
-                total_pings_grupo = sum(getattr(a, "total_pings", 0) for a in ativos_do_grupo)
-
-                lista_resumos.append(
-                    ResumoGrupo(
-                        nome=nome,
-                        cor=next((g.cor for g in grupos_db if g.nome == nome), "gray"),
-                        ininterrupto=mapa_ininterrupto.get(nome, False),
-                        total=len(ativos_do_grupo),
-                        online=online,
-                        lentos=lentos,
-                        offline=offline,
-                        latencia_media=round(media_lat, 1),
-                        total_pings=total_pings_grupo,
-                        ativos_lista=ativos_do_grupo
-                    )
+            lista_resumos.append(
+                ResumoGrupo(
+                    nome=nome,
+                    cor=mapa_cores.get(nome, "gray"),
+                    ininterrupto=mapa_ininterrupto.get(nome, False),
+                    total=len(ativos_do_grupo),
+                    online=online,
+                    lentos=lentos,
+                    offline=offline,
+                    latencia_media=round(media_lat, 1),
+                    total_pings=total_pings_grupo,
+                    ativos_lista=ativos_do_grupo,
                 )
+            )
 
-            self.resumo_grupos = lista_resumos
+        self.resumo_grupos = lista_resumos
+
+    def _carregar_configs_ram(self):
+        """Helper interno para recarregar o config.env na RAM."""
+        load_dotenv(_config_path, override=True)
+        self._ram_intervalo = int(os.environ.get("INTERVALO_SEGUNDOS", 10))
+        self._ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
+        self._ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
+        self._ram_freq_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
+        self._ram_dias_operacao = _ler_dias_operacao()
 
     @rx.var
     def monitoramento_travado(self) -> bool:
@@ -413,12 +485,10 @@ class AppState(rx.SharedState):
 
     @rx.var
     def ativos_agrupados(self) -> dict[str, list[AtivoRede]]:
-        grupos = {}
+        grupos: dict[str, list[AtivoRede]] = {}
         for ativo in self._ativos_live:
             nome_grupo = getattr(ativo, "grupo", None) or "GERAL"
-            if nome_grupo not in grupos:
-                grupos[nome_grupo] = []
-            grupos[nome_grupo].append(ativo)
+            grupos.setdefault(nome_grupo, []).append(ativo)
         return grupos
 
     @rx.event(background=True)
@@ -446,8 +516,8 @@ class AppState(rx.SharedState):
 
         yield  # Força o flush do estado agora, pra UI desabilitar o botão antes do envio bloqueante
 
-        loop = asyncio.get_running_loop()
-        sucesso = await loop.run_in_executor(_ping_executor, disparar_relatorio, snapshot)
+        # Usa rx.run_in_thread (promovido para API pública no Reflex 0.11) para não bloquear o event loop
+        sucesso = await rx.run_in_thread(partial(disparar_relatorio, snapshot))
 
         async with self:
             self.enviando_relatorio_manual = False
@@ -461,73 +531,63 @@ class AppState(rx.SharedState):
     @rx.event
     async def recarregar_configs_da_memoria(self):
         """O Gatilho: Puxa o .env atualizado e injeta na RAM para os loops usarem."""
-        load_dotenv(_config_path, override=True)
-        self._ram_intervalo = int(os.environ.get("INTERVALO_SEGUNDOS", 10))
-        self._ram_limite_ms = int(os.environ.get("LIMITE_LATENCIA_MS", 100))
-        self._ram_max_pings = int(os.environ.get("PINGS_MAXIMOS", 12))
-        self._ram_freq_emails = int(os.environ.get("FREQUENCIA_EMAILS", 60))
-        self._ram_dias_operacao = [
-            int(d) for d in os.environ.get("DIAS_OPERACAO", "1,2,3,4,5,6").split(",") if d
-        ]
+        self._carregar_configs_ram()
 
     @rx.event
     async def conectar_painel(self):
         """Sintoniza o navegador na Sala Global e garante que o buffer tenha dados."""
         # 1. Vincula o navegador ao token central e pega a instância oficial do servidor
         linked_state = await self._link_to("echo-painel-central")
-        
-        # 2. Se for o primeiro computador a entrar na sala desde que o servidor ligou, 
+
+        # 2. Se for o primeiro computador a entrar na sala desde que o servidor ligou,
         # ele vai até o banco de dados SQLite e puxa o rascunho inicial.
         if not linked_state.buffer_iniciado:
             with rx.session() as session:
-                # Carrega o mapa de cores dos grupos
-                grupos_db = session.exec(GrupoDB.select()).all()
+                grupos_db = session.exec(select(GrupoDB)).all()
                 mapa_cores = {g.nome: g.cor for g in grupos_db}
                 mapa_ininterrupto = {g.nome: g.ininterrupto for g in grupos_db}
-                
-                # Carrega os ativos salvos no HD
-                registros = session.exec(AtivoDB.select()).all()
-                
-                # Alimenta a prancheta colaborativa oficial do Servidor
-                linked_state.ativos_buffer = [
-                    {
-                        "nome": a.nome, 
-                        "ip": a.ip, 
-                        "local": a.local, 
-                        "grupo": a.grupo, 
-                        "cor_grupo": mapa_cores.get(a.grupo, "gray")
-                    } 
+                registros = session.exec(select(AtivoDB)).all()
+
+            linked_state.ativos_buffer = [
+                {
+                    "nome": a.nome,
+                    "ip": a.ip,
+                    "local": a.local,
+                    "grupo": a.grupo,
+                    "cor_grupo": mapa_cores.get(a.grupo, "gray"),
+                }
+                for a in registros
+            ]
+
+            if not linked_state.monitorando:
+                linked_state._ativos_live = [
+                    AtivoRede(
+                        nome=a.nome,
+                        ip=a.ip,
+                        local=a.local,
+                        grupo=a.grupo,
+                        cor_grupo=mapa_cores.get(a.grupo, "gray"),
+                        ininterrupto=mapa_ininterrupto.get(a.grupo, False),
+                        status="Aguardando...",
+                        latencia=0.0,
+                        historico=[],
+                    )
                     for a in registros
                 ]
 
-                if not linked_state.monitorando:
-                    linked_state._ativos_live = [
-                        AtivoRede(
-                            nome=a.nome, 
-                            ip=a.ip, 
-                            local=a.local,
-                            grupo=a.grupo, 
-                            cor_grupo=mapa_cores.get(a.grupo, "gray"),
-                            ininterrupto=mapa_ininterrupto.get(a.grupo, False),
-                            status="Aguardando...", 
-                            latencia=0.0,
-                            historico=[]
-                        ) for a in registros
-                    ]
+                linked_state._recalcular_resumos()
 
-                    linked_state._recalcular_resumos()
+            linked_state.buffer_iniciado = True
 
-                linked_state.buffer_iniciado = True
-    
     @rx.event
     def parar_monitoramento_global(self):
         """O botão Stop (visto por todos)."""
         self.monitorando = False
         self.ciclo += 1
-        
+
         # Reseta o status visual para quem estiver assistindo
         self._ativos_live = [
-            a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": [], "total_latencia": 0.0, "total_pings": 0}) 
+            a.model_copy(update={"status": "Aguardando...", "latencia": 0.0, "historico": [], "total_latencia": 0.0, "total_pings": 0})
             for a in self._ativos_live
         ]
 
@@ -538,17 +598,17 @@ class AppState(rx.SharedState):
     @rx.event(background=True)
     async def loop_motor_central(self):
         async with self:
-            await self.recarregar_configs_da_memoria()
+            self._carregar_configs_ram()
             meu_ciclo = self.ciclo
-    
+
         loop = asyncio.get_running_loop()
-    
+
         while True:
             try:
                 async with self:
                     if not self.monitorando or self.ciclo != meu_ciclo:
                         break
-                    
+
                     ativos_snapshot = [
                         {
                             "nome": str(a.nome),
@@ -560,11 +620,10 @@ class AppState(rx.SharedState):
                             "pings_offline": int(a.pings_offline),
                             "pings_online": int(a.pings_online),
                             "alerta_enviado": bool(a.alerta_enviado),
-                            "historico":[
+                            "historico": [
                                 {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
                                 for h in list(a.historico)[-(self._ram_max_pings - 1):]
                             ],
-                            # PREVENÇÃO DE BUG: Adicionado ao snapshot para o .get() funcionar!
                             "total_latencia": float(getattr(a, "total_latencia", 0.0)),
                             "total_pings": int(getattr(a, "total_pings", 0)),
                         }
@@ -572,14 +631,13 @@ class AppState(rx.SharedState):
                     ]
                     intervalo = int(self._ram_intervalo)
                     limite_ms = float(self._ram_limite_ms)
-                    max_pings = int(self._ram_max_pings)
-    
+
                 if not ativos_snapshot:
                     await asyncio.sleep(intervalo)
                     continue
-                
+
                 hora_atual = datetime.now().strftime("%H:%M:%S")
-    
+
                 def pingar_sync(ip: str) -> tuple[str, float]:
                     try:
                         resultado = icmplib.ping(
@@ -594,12 +652,12 @@ class AppState(rx.SharedState):
                     except Exception as e:
                         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [PING] Erro ao pingar {ip}: {e}")
                         return "morto", 0.0
-    
+
                 resultados = await asyncio.gather(*[
                     loop.run_in_executor(_ping_executor, pingar_sync, a["ip"])
                     for a in ativos_snapshot
                 ])
-    
+
                 ativos_atualizados = []
                 disparar_alerta = False
 
@@ -613,22 +671,20 @@ class AppState(rx.SharedState):
                     pings_offline_atual = ativo["pings_offline"]
                     pings_online_atual = ativo.get("pings_online", 0)
                     alerta_enviado_atual = ativo["alerta_enviado"]
-                
+
                     if novo_status == "Offline":
-                        # Continua/inicia a contagem de falhas; zera a contagem de recuperação
                         novo_pings_offline = pings_offline_atual + 1
                         novo_pings_online = 0
-                        novo_alerta_enviado = alerta_enviado_atual  # NÃO mexe no alerta aqui
+                        novo_alerta_enviado = alerta_enviado_atual
                     else:
-                        # Só considera "recuperado de verdade" após N sucessos seguidos
                         novo_pings_online = pings_online_atual + 1
                         if novo_pings_online >= 5:
                             novo_pings_offline = 0
-                            novo_alerta_enviado = False   # agora sim libera um novo ciclo de alerta
+                            novo_alerta_enviado = False
                         else:
-                            novo_pings_offline = pings_offline_atual  # mantém o histórico de falha
-                            novo_alerta_enviado = alerta_enviado_atual  # mantém o estado do alerta
-                
+                            novo_pings_offline = pings_offline_atual
+                            novo_alerta_enviado = alerta_enviado_atual
+
                     if (
                         ativo["ininterrupto"]
                         and novo_pings_offline >= 5
@@ -654,7 +710,7 @@ class AppState(rx.SharedState):
                         status=novo_status,
                         historico=novo_historico,
                         total_latencia=ativo.get("total_latencia", 0.0) + nova_latencia,
-                        total_pings=ativo.get("total_pings", 0) + 1
+                        total_pings=ativo.get("total_pings", 0) + 1,
                     ))
 
                 if disparar_alerta:
@@ -670,69 +726,47 @@ class AppState(rx.SharedState):
                         loop.run_in_executor(
                             _ping_executor,
                             disparar_alerta_offline,
-                            ativos_criticos.copy()
+                            ativos_criticos.copy(),
                         )
-    
-                # --- O BLOCO FINAL OTIMIZADO ---
+
                 async with self:
                     if not self.monitorando or self.ciclo != meu_ciclo:
                         break
-                    
-                    # 1. Atualiza a lista privada principal
+
                     self._ativos_live = ativos_atualizados
-                    
-                    # 2. Constrói o agrupamento para quem for clicar em "Detalhes"
-                    novos_grupos = {}
-                    for ativo in ativos_atualizados:
-                        nome_grupo = ativo.grupo if ativo.grupo else "GERAL"
-                        if nome_grupo not in novos_grupos:
-                            novos_grupos[nome_grupo] = []
-                        novos_grupos[nome_grupo].append(ativo)
-                        
-                    self.ativos_agrupados = novos_grupos
-                    
                     self._recalcular_resumos()
-                    
                     self.ultimo_ping = time.time()
-                
+
                 await asyncio.sleep(intervalo)
-    
+
             except asyncio.CancelledError:
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [MOTOR] Task cancelada pelo Reflex. Encerrando loop.")
                 break
             except Exception as e:
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [MOTOR] Erro inesperado no ciclo de monitoramento: {e}")
-                await asyncio.sleep(5) 
+                await asyncio.sleep(5)
                 continue
-    
+
     @rx.event(background=True)
     async def loop_relatorio(self):
         """Loop contínuo que dispara os e-mails baseados no tempo configurado."""
         async with self:
             meu_ciclo = self.ciclo
-            
+
         while True:
-            # 1. Pega a frequência da RAM (e converte para segundos)
             async with self:
                 if not self.monitorando or self.ciclo != meu_ciclo:
                     break
-                tempo_espera_segundos = self._ram_freq_emails * 60 
+                tempo_espera_segundos = self._ram_freq_emails * 60
 
-            # 2. O SEGREDO: As Micro-Sonecas!
-            # Dorme 1 segundo por vez para poder checar se o usuário clicou em Pausar
             for t in range(tempo_espera_segundos):
                 async with self:
-                    # Se o sistema foi pausado ou reiniciado, MATA o loop imediatamente
                     self.proximo_relatorio = tempo_espera_segundos - t
-                    self.relatorio_min = f"{self.proximo_relatorio // 60:02d}"
-                    self.relatorio_seg = f"{self.proximo_relatorio % 60:02d}"
-
                     if not self.monitorando or self.ciclo != meu_ciclo:
-                        return 
-                    
-                await asyncio.sleep(1)                       
+                        return
 
-            # 3. O tempo de espera acabou completo. Hora de tirar a fotografia da rede!
+                await asyncio.sleep(1)
+
             async with self:
                 if not self.monitorando or self.ciclo != meu_ciclo:
                     return
@@ -741,34 +775,33 @@ class AppState(rx.SharedState):
                 if dia_hoje not in self._ram_dias_operacao:
                     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [RELATÓRIO] Hoje (dia {dia_hoje}) não é dia de operação. Envio pulado, aguardando próximo ciclo.")
                     continue
-                
+
                 snapshot_relatorio = [
                     {
-                        "nome":str(a.nome),
-                        "ip":str(a.ip),
-                        "local":str(a.local),
-                        "grupo":str(a.grupo),
-                        "cor_grupo":str(a.cor_grupo),
-                        "ininterrupto":bool(a.ininterrupto),
-                        "pings_offline":int(a.pings_offline),
-                        "alerta_enviado":bool(a.alerta_enviado),
-                        "status":str(a.status),
-                        "latencia":float(a.latencia),
-                        "historico":[
+                        "nome": str(a.nome),
+                        "ip": str(a.ip),
+                        "local": str(a.local),
+                        "grupo": str(a.grupo),
+                        "cor_grupo": str(a.cor_grupo),
+                        "ininterrupto": bool(a.ininterrupto),
+                        "pings_offline": int(a.pings_offline),
+                        "alerta_enviado": bool(a.alerta_enviado),
+                        "status": str(a.status),
+                        "latencia": float(a.latencia),
+                        "historico": [
                             {"hora": str(h["hora"]), "latencia": float(h["latencia"])}
                             for h in list(a.historico)
                         ],
-                        "total_latencia":float(a.total_latencia),
-                        "total_pings":int(a.total_pings)
+                        "total_latencia": float(a.total_latencia),
+                        "total_pings": int(a.total_pings),
                     }
                     for a in self._ativos_live
                 ]
-                
-            
-            # 5. Dispara o e-mail
-            disparar_relatorio([AtivoRede(**s) for s in snapshot_relatorio])
 
-            # 6. Reseta o histórico de todos os ativos após o envio
+            # Dispara o e-mail fora do event loop usando rx.run_in_thread (Reflex 0.11)
+            ativos_relatorio = [AtivoRede(**s) for s in snapshot_relatorio]
+            await rx.run_in_thread(partial(disparar_relatorio, ativos_relatorio))
+
             async with self:
                 if not self.monitorando or self.ciclo != meu_ciclo:
                     return
@@ -786,7 +819,7 @@ class AppState(rx.SharedState):
                         latencia=s["latencia"],
                         historico=[],
                         total_latencia=0.0,
-                        total_pings=0
+                        total_pings=0,
                     )
                     for s in snapshot_relatorio
                 ]
@@ -800,26 +833,26 @@ class AppState(rx.SharedState):
 
         while True:
             try:
-                await asyncio.sleep(30)  # Checa a cada 30 segundos
+                await asyncio.sleep(30)
 
                 async with self:
                     if not self.monitorando or self.ciclo != meu_ciclo:
                         break
 
-                    tempo_desde_ultimo = time.time() - self.ultimo_ping
+                    ultimo_ping = self.ultimo_ping
+                    tempo_desde_ultimo = time.time() - ultimo_ping
                     intervalo = self._ram_intervalo
 
-                # Se passou mais de 3x o intervalo sem ping, reinicia o loop
-                if self.ultimo_ping > 0 and tempo_desde_ultimo > (intervalo * 3):
+                if ultimo_ping > 0 and tempo_desde_ultimo > (intervalo * 3):
                     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [WATCHDOG] Loop travado há {tempo_desde_ultimo:.0f}s. Reiniciando...")
                     async with self:
                         self.ciclo += 1
                         meu_ciclo = self.ciclo
                         self.ultimo_ping = time.time()
 
-                    return [
+                    yield [
                         AppState.loop_motor_central(),
-                        rx.toast.warning("Monitoramento reiniciado automaticamente.", position="top-right")
+                        rx.toast.warning("Monitoramento reiniciado automaticamente.", position="top-right"),
                     ]
 
             except asyncio.CancelledError:
@@ -827,6 +860,7 @@ class AppState(rx.SharedState):
             except Exception as e:
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [WATCHDOG] Erro: {e}")
                 await asyncio.sleep(10)
+
 
 # 2. ESTADO DE AUTENTICAÇÃO
 class AuthState(rx.State):
@@ -838,49 +872,69 @@ class AuthState(rx.State):
     senha_input: str = ""
 
     # Variáveis de setup inicial
-    setup_username: str = "admin" # Sugestão padrão
+    setup_username: str = "admin"
     setup_email: str = ""
     setup_password: str = ""
     setup_confirmacao: str = ""
 
     tentando_login: bool = False
 
+    # --- Setters explícitos (obrigatórios no Reflex 0.9+, substituem state_auto_setters) ---
+    @rx.event
+    def set_email_input(self, value: str):
+        self.email_input = value
+
+    @rx.event
+    def set_senha_input(self, value: str):
+        self.senha_input = value
+
+    @rx.event
+    def set_setup_username(self, value: str):
+        self.setup_username = value
+
+    @rx.event
+    def set_setup_email(self, value: str):
+        self.setup_email = value
+
+    @rx.event
+    def set_setup_password(self, value: str):
+        self.setup_password = value
+
+    @rx.event
+    def set_setup_confirmacao(self, value: str):
+        self.setup_confirmacao = value
+
     @rx.event
     def tentar_login(self):
         with rx.session() as session:
-            # Procura o utilizador na base de dados
             user = session.exec(
-                User.select().where(User.email == self.email_input.lower().strip())
+                select(User).where(User.email == self.email_input.lower().strip())
             ).first()
 
             self.tentando_login = True
 
-            if user:    
-                # Verifica a senha usando o Hash Bcrypt
-                password_bytes = self.senha_input.encode('utf-8')
-                hash_bytes = user.password.encode('utf-8')
-                novo_token = str(uuid.uuid4())
+            if user:
+                password_bytes = self.senha_input.encode("utf-8")
+                hash_bytes = user.password.encode("utf-8")
 
                 if bcrypt.checkpw(password_bytes, hash_bytes):
                     novo_token = str(uuid.uuid4())
-                    
-                    # Atualiza o token no banco de dados (anulando logins antigos)
+
                     user.session_token = novo_token
                     session.add(user)
                     session.commit()
 
                     self.usuario_logado = user.username
                     self.role_logado = user.role
-                    self.token_logado = novo_token # Manda para o navegador atual
-                    
+                    self.token_logado = novo_token
+
                     self.email_input = ""
                     self.senha_input = ""
-                    
+
                     self.tentando_login = False
-                    yield rx.redirect("/")          
+                    yield rx.redirect("/")
                     return
 
-            # Se falhar (utilizador não existe ou senha errada)
             yield rx.toast.error("Usuário ou senha incorretos.", position="top-right")
             self.senha_input = ""
             self.tentando_login = False
@@ -888,13 +942,14 @@ class AuthState(rx.State):
     @rx.event
     def fazer_logout(self):
         with rx.session() as db_session:
-            user = db_session.exec(User.select().where(User.username == self.usuario_logado)).first()
+            user = db_session.exec(
+                select(User).where(User.username == self.usuario_logado)
+            ).first()
             if user:
                 user.session_token = ""
                 db_session.add(user)
                 db_session.commit()
 
-        # Limpa o navegador
         self.usuario_logado = ""
         self.token_logado = ""
         return rx.redirect("/login")
@@ -903,25 +958,23 @@ class AuthState(rx.State):
     async def verificar_acesso(self):
         """O Novo Guarda-Costas: Verifica banco vazio -> Login -> Painel"""
         with rx.session() as session:
-            # Se não existe NENHUM usuário no banco, força a ir para a tela de Setup
-            if not session.exec(User.select()).first():
+            if not session.exec(select(User)).first():
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [AUTENTICAÇÃO] Nenhum usuário encontrado no banco de dados. Redirecionando para a tela de configuração inicial.")
                 self.usuario_logado, self.token_logado = "", ""
                 return rx.redirect("/setup")
-                
-            # Se existem usuários, mas o navegador não tem sessão, vai pro Login
+
             if not self.usuario_logado or not self.token_logado:
                 print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [AUTENTICAÇÃO] Acesso negado: Nenhuma sessão ativa encontrada no navegador.")
                 return rx.redirect("/login")
-    
-            user = session.exec(User.select().where(User.username == self.usuario_logado)).first()
+
+            user = session.exec(
+                select(User).where(User.username == self.usuario_logado)
+            ).first()
 
             if user:
-                # O PULO DO GATO: Se o token do navegador for diferente do banco, 
-                # significa que outro PC fez login com essa conta depois de nós!
                 if user.session_token != self.token_logado:
                     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [AUTENTICAÇÃO] Acesso negado: Token de sessão inválido. Outro login detectado para este usuário.")
-                    self.usuario_logado, self.token_logado = "", ""   
+                    self.usuario_logado, self.token_logado = "", ""
                     return rx.redirect("/login")
 
                 self.role_logado = user.role
@@ -934,10 +987,9 @@ class AuthState(rx.State):
     def checar_acesso_login(self):
         """Protege a própria tela de login. Se o banco estiver vazio, expulsa pro Setup."""
         with rx.session() as session:
-            if not session.exec(User.select()).first():
+            if not session.exec(select(User)).first():
                 return rx.redirect("/setup")
-                
-        # Se já estiver logado e tentar abrir o /login, manda pro Painel
+
         if self.usuario_logado:
             return rx.redirect("/")
 
@@ -947,46 +999,45 @@ class AuthState(rx.State):
         if not self.setup_username or not self.setup_password or not self.setup_confirmacao or not self.setup_email:
             yield rx.toast.error("Todos os campos são obrigatórios para criar o administrador.", position="top-right")
             return
-        
+
         if self.setup_password != self.setup_confirmacao:
             yield rx.toast.warning("As senhas não coincidem.", position="top-right")
             return
 
         with rx.session() as session:
-            # Proteção: Se alguém já criou, bloqueia a operação
-            if session.exec(User.select()).first():
+            if session.exec(select(User)).first():
                 yield rx.toast.error("O sistema já possui um administrador.", position="top-right")
                 return
-            
+
             salt = bcrypt.gensalt()
-            hashed = bcrypt.hashpw(self.setup_password.encode('utf-8'), salt)
-            
+            hashed = bcrypt.hashpw(self.setup_password.encode("utf-8"), salt)
+
             novo_admin = User(
                 username=self.setup_username.lower().strip(),
                 email=self.setup_email.lower().strip(),
-                password=hashed.decode('utf-8'),
+                password=hashed.decode("utf-8"),
                 role="admin",
             )
             session.add(novo_admin)
             session.commit()
-        
-        # Loga automaticamente o criador e joga para o painel principal!
+
         self.setup_username = ""
         self.setup_email = ""
         self.setup_password = ""
         self.setup_confirmacao = ""
-        return rx.redirect("/login")
+        yield rx.redirect("/login")
+
 
 # 3. ESTADO DE CONFIGURAÇÕES
 class ConfigState(rx.State):
-    """Gerencia exclusivamente as variáveis de ambiente e e-mails."""
+    """Gerencia exclusivamente as variáveis de ambiente e grupos."""
 
     # Variáveis de e-mails
     emails: list[str] = []
     novo_email_input: str = ""
 
-    # Variáveis de grupos
-    grupos: list[dict[str, str]] = []
+    # Variáveis de grupos (tipagem forte via GrupoItem)
+    grupos: list[GrupoItem] = []
     novo_grupo_input: str = ""
     novo_grupo_cor_input: str = "gray"
     novo_grupo_ininterrupto_input: bool = False
@@ -998,42 +1049,50 @@ class ConfigState(rx.State):
     edit_grupo_cor: str = "gray"
     edit_grupo_ininterrupto: bool = False
 
-    dias_operacao: list[int] = [int(d) for d in os.environ.get("DIAS_OPERACAO", "1,2,3,4,5,6").split(",") if d]
-    dias_operacao_buffer: list[int] = dias_operacao.copy()
+    dias_operacao: rx.Field[list[int]] = rx.field(default_factory=_ler_dias_operacao)
+    dias_operacao_buffer: rx.Field[list[int]] = rx.field(default_factory=_ler_dias_operacao)
 
     # --- Dicionários de Configuração ---
-    config: dict[str, str | int]  = {
-        "smtp_server": os.environ.get("SMTP_SERVER", ""), 
-        "smtp_port": int(os.environ.get("SMTP_PORT", 465)),
-        "smtp_login": os.environ.get("SMTP_LOGIN", ""), 
-        "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
-        "intervalo_segundos": int(os.environ.get("INTERVALO_SEGUNDOS", 10)),
-        "limite_latencia_ms": int(os.environ.get("LIMITE_LATENCIA_MS", 100)),
-        "pings_maximos": int(os.environ.get("PINGS_MAXIMOS", 12)),
-        "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60)),
-    }
-    config_buffer: dict[str, str | int] = config.copy()
+    config: rx.Field[dict[str, str | int]] = rx.field(default_factory=_ler_config_env)
+    config_buffer: rx.Field[dict[str, str | int]] = rx.field(default_factory=_ler_config_env)
+
+    # --- Setters explícitos ---
+    @rx.event
+    def set_novo_grupo_input(self, value: str):
+        self.novo_grupo_input = value
+
+    @rx.event
+    def set_novo_grupo_cor_input(self, value: str):
+        self.novo_grupo_cor_input = value
+
+    @rx.event
+    def set_novo_grupo_ininterrupto_input(self, value: bool):
+        self.novo_grupo_ininterrupto_input = value
+
+    @rx.event
+    def set_edit_grupo_nome(self, value: str):
+        self.edit_grupo_nome = value
+
+    @rx.event
+    def set_edit_grupo_cor(self, value: str):
+        self.edit_grupo_cor = value
+
+    @rx.event
+    def set_edit_grupo_ininterrupto(self, value: bool):
+        self.edit_grupo_ininterrupto = value
 
     @rx.var
     def nomes_dos_grupos(self) -> list[str]:
         """Gera uma lista com o nome dos grupos para os filtros e dropdowns."""
-        return [g["nome"] for g in self.grupos]
+        return [g.nome for g in self.grupos]
 
     # --- CONFIGURAÇÕES GERAIS ---
     @rx.event
     def carregar_configs(self):
-        self.config: dict[str, str | int]  = {
-            "smtp_server": os.environ.get("SMTP_SERVER", ""), 
-            "smtp_port": int(os.environ.get("SMTP_PORT", 465)),
-            "smtp_login": os.environ.get("SMTP_LOGIN", ""), 
-            "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
-            "intervalo_segundos": int(os.environ.get("INTERVALO_SEGUNDOS", 10)),
-            "limite_latencia_ms": int(os.environ.get("LIMITE_LATENCIA_MS", 100)),
-            "pings_maximos": int(os.environ.get("PINGS_MAXIMOS", 12)),
-            "frequencia_emails": int(os.environ.get("FREQUENCIA_EMAILS", 60)),
-        }
-        self.config_buffer: dict[str, str | int] = self.config.copy()
-        self.dias_operacao = [int(d) for d in os.environ.get("DIAS_OPERACAO", "1,2,3,4,5,6").split(",") if d]
+        load_dotenv(_config_path, override=True)
+        self.config = _ler_config_env()
+        self.config_buffer = self.config.copy()
+        self.dias_operacao = _ler_dias_operacao()
         self.dias_operacao_buffer = self.dias_operacao.copy()
 
     @rx.event
@@ -1056,13 +1115,10 @@ class ConfigState(rx.State):
 
     @rx.event
     async def salvar_configs_env(self):
-        """Salva as alterações do buffer fisicamente no arquivo .env."""      
-        
-        # Garante que o arquivo exista
+        """Salva as alterações do buffer fisicamente no arquivo .env."""
         if not os.path.exists(_config_path):
-            open(_config_path, 'w').close()
-            
-        # O set_key pede Strings, então convertemos tudo para str() ao salvar
+            open(_config_path, "w").close()
+
         set_key(_config_path, "SMTP_SERVER", str(self.config_buffer["smtp_server"]))
         set_key(_config_path, "SMTP_PORT", str(self.config_buffer["smtp_port"]))
         set_key(_config_path, "SMTP_LOGIN", str(self.config_buffer["smtp_login"]))
@@ -1073,56 +1129,61 @@ class ConfigState(rx.State):
         set_key(_config_path, "FREQUENCIA_EMAILS", str(self.config_buffer["frequencia_emails"]))
         set_key(_config_path, "DIAS_OPERACAO", ",".join(str(d) for d in self.dias_operacao_buffer))
 
-        # Atualiza a tela privada do usuário que acabou de clicar
         self.config = self.config_buffer.copy()
         self.dias_operacao = self.dias_operacao_buffer.copy()
 
-        # Retorna o aviso de sucesso e o "Gatilho" para atualizar a RAM do Servidor Global
-        return [
-            rx.toast.success("Configurações salvas e aplicadas!", position="top-right"),
-            AppState.recarregar_configs_da_memoria
-        ]
+        # Novo no Reflex 0.11: event handlers são diretamente awaitable no mesmo lock de estado
+        await AppState.recarregar_configs_da_memoria()
+        return rx.toast.success("Configurações salvas e aplicadas!", position="top-right")
 
     # --- CONFIGURAÇÕES DE GRUPOS ---
-    @rx.event
-    def carregar_grupos(self):
+    def _carregar_grupos_interno(self):
         with rx.session() as session:
-            grupo_padrao = session.exec(GrupoDB.select().where(GrupoDB.nome == "GERAL")).first()
-            
-            # Se não existir (ex: primeira vez rodando o app), ele cria na hora!
+            grupo_padrao = session.exec(select(GrupoDB).where(GrupoDB.nome == "GERAL")).first()
+
             if not grupo_padrao:
                 novo_padrao = GrupoDB(nome="GERAL", cor="gray", ininterrupto=False)
                 session.add(novo_padrao)
                 session.commit()
 
-            registros = session.exec(GrupoDB.select()).all()
-            ativos = session.exec(AtivoDB.select()).all()
-            totais_por_grupo = {}
+            registros = session.exec(select(GrupoDB)).all()
+            ativos = session.exec(select(AtivoDB)).all()
+            totais_por_grupo: dict[str, int] = {}
             for ativo in ativos:
                 nome_grupo = ativo.grupo or "GERAL"
                 totais_por_grupo[nome_grupo] = totais_por_grupo.get(nome_grupo, 0) + 1
 
             self.grupos = [
-                {
-                    "nome": s.nome,
-                    "cor": s.cor,
-                    "ininterrupto": s.ininterrupto,
-                    "total": totais_por_grupo.get(s.nome, 0)
-                }
+                GrupoItem(
+                    nome=s.nome,
+                    cor=s.cor,
+                    ininterrupto=s.ininterrupto,
+                    total=totais_por_grupo.get(s.nome, 0),
+                )
                 for s in registros
             ]
 
+    def _limpar_edicao_grupo(self):
+        self.grupo_edicao = ""
+        self.edit_grupo_nome = ""
+        self.edit_grupo_cor = "gray"
+        self.edit_grupo_ininterrupto = False
+
+    @rx.event
+    def carregar_grupos(self):
+        self._carregar_grupos_interno()
+
     @rx.event
     def adicionar_grupo(self):
-        grupo_limpo = self.novo_grupo_input.strip().upper() # Padroniza tudo em maiúsculo (ex: TI, GALPÃO)
+        grupo_limpo = self.novo_grupo_input.strip().upper()
         cor_limpa = self.novo_grupo_cor_input.strip()
         ininterrupto = self.novo_grupo_ininterrupto_input
 
-        if not grupo_limpo: 
+        if not grupo_limpo:
             return rx.toast.warning("O nome do grupo é obrigatório.", position="top-right")
-        
+
         with rx.session() as session:
-            registro = session.exec(GrupoDB.select().where(GrupoDB.nome == grupo_limpo)).first()
+            registro = session.exec(select(GrupoDB).where(GrupoDB.nome == grupo_limpo)).first()
 
             if not registro:
                 novo = GrupoDB(nome=grupo_limpo, cor=cor_limpa, ininterrupto=ininterrupto)
@@ -1132,7 +1193,7 @@ class ConfigState(rx.State):
                 self.novo_grupo_input = ""
                 self.novo_grupo_cor_input = "gray"
                 self.novo_grupo_ininterrupto_input = False
-                self.carregar_grupos()
+                self._carregar_grupos_interno()
 
                 return rx.toast.success(f"Grupo '{grupo_limpo}' adicionado!", position="top-right")
             return rx.toast.warning("Grupo já existe.", position="top-right")
@@ -1141,63 +1202,60 @@ class ConfigState(rx.State):
     async def remover_grupo(self, grupo_alvo: str):
         if grupo_alvo == "GERAL":
             return rx.toast.error("O grupo padrão não pode ser apagado.", position="top-right")
-            
+
         with rx.session() as session:
-            registro = session.exec(GrupoDB.select().where(GrupoDB.nome == grupo_alvo)).first()
+            registro = session.exec(select(GrupoDB).where(GrupoDB.nome == grupo_alvo)).first()
 
             if not registro:
                 return rx.toast.error("Grupo não encontrado.", position="top-right")
 
-            grupo_geral = session.exec(GrupoDB.select().where(GrupoDB.nome == "GERAL")).first()
+            grupo_geral = session.exec(select(GrupoDB).where(GrupoDB.nome == "GERAL")).first()
             cor_geral = grupo_geral.cor if grupo_geral else "gray"
             ininterrupto_geral = grupo_geral.ininterrupto if grupo_geral else False
 
-            ativos_orfaos = session.exec(AtivoDB.select().where(AtivoDB.grupo == grupo_alvo)).all()
+            ativos_orfaos = session.exec(select(AtivoDB).where(AtivoDB.grupo == grupo_alvo)).all()
             total_migrados = len(ativos_orfaos)
             for ativo in ativos_orfaos:
                 ativo.grupo = "GERAL"
                 session.add(ativo)
-            
+
             session.delete(registro)
             session.commit()
 
-            self.carregar_grupos()
+        self._carregar_grupos_interno()
 
-            sala = await self.get_state(AppState)
+        sala = await self.get_state(AppState)
 
-            sala.ativos_buffer = [
-                {**item, "grupo": "GERAL", "cor_grupo": cor_geral} if item["grupo"] == grupo_alvo else item
-                for item in sala.ativos_buffer
-            ]
+        sala.ativos_buffer = [
+            {**item, "grupo": "GERAL", "cor_grupo": cor_geral} if item["grupo"] == grupo_alvo else item
+            for item in sala.ativos_buffer
+        ]
 
-            sala._ativos_live = [
-                a.model_copy(update={"grupo": "GERAL", "cor_grupo": cor_geral, "ininterrupto": ininterrupto_geral})
-                if a.grupo == grupo_alvo else a
-                for a in sala._ativos_live
-            ]
-            sala._recalcular_resumos()
+        sala._ativos_live = [
+            a.model_copy(update={"grupo": "GERAL", "cor_grupo": cor_geral, "ininterrupto": ininterrupto_geral})
+            if a.grupo == grupo_alvo else a
+            for a in sala._ativos_live
+        ]
+        sala._recalcular_resumos()
 
-            if total_migrados > 0:
-                return rx.toast.success(f"Grupo '{grupo_alvo}' removido. {total_migrados} ativo(s) movido(s) para GERAL.", position="top-right")
-            return rx.toast.success(f"Grupo '{grupo_alvo}' removido!", position="top-right")
+        if total_migrados > 0:
+            return rx.toast.success(f"Grupo '{grupo_alvo}' removido. {total_migrados} ativo(s) movido(s) para GERAL.", position="top-right")
+        return rx.toast.success(f"Grupo '{grupo_alvo}' removido!", position="top-right")
 
     @rx.event
     def iniciar_edicao_grupo(self, nome_grupo: str):
         """Puxa os dados atuais do grupo pro formulário de edição."""
         for g in self.grupos:
-            if g["nome"] == nome_grupo:
+            if g.nome == nome_grupo:
                 self.grupo_edicao = nome_grupo
-                self.edit_grupo_nome = g["nome"]
-                self.edit_grupo_cor = g["cor"]
-                self.edit_grupo_ininterrupto = g["ininterrupto"]
+                self.edit_grupo_nome = g.nome
+                self.edit_grupo_cor = g.cor
+                self.edit_grupo_ininterrupto = g.ininterrupto
                 break
 
     @rx.event
     def cancelar_edicao_grupo(self):
-        self.grupo_edicao = ""
-        self.edit_grupo_nome = ""
-        self.edit_grupo_cor = "gray"
-        self.edit_grupo_ininterrupto = False
+        self._limpar_edicao_grupo()
 
     @rx.event
     async def salvar_edicao_grupo(self):
@@ -1214,13 +1272,12 @@ class ConfigState(rx.State):
             return rx.toast.error("O grupo padrão 'GERAL' não pode ser renomeado.", position="top-right")
 
         with rx.session() as session:
-            registro = session.exec(GrupoDB.select().where(GrupoDB.nome == nome_antigo)).first()
+            registro = session.exec(select(GrupoDB).where(GrupoDB.nome == nome_antigo)).first()
             if not registro:
                 return rx.toast.error("Grupo não encontrado.", position="top-right")
 
-            # Se o nome mudou, garante que não existe outro grupo com esse nome
             if nome_novo != nome_antigo:
-                conflito = session.exec(GrupoDB.select().where(GrupoDB.nome == nome_novo)).first()
+                conflito = session.exec(select(GrupoDB).where(GrupoDB.nome == nome_novo)).first()
                 if conflito:
                     return rx.toast.error(f"Já existe um grupo chamado '{nome_novo}'.", position="top-right")
 
@@ -1229,19 +1286,17 @@ class ConfigState(rx.State):
             registro.ininterrupto = ininterrupto_novo
             session.add(registro)
 
-            # Cascateia o novo nome pra todos os ativos que pertenciam ao grupo antigo
             if nome_novo != nome_antigo:
-                ativos_do_grupo = session.exec(AtivoDB.select().where(AtivoDB.grupo == nome_antigo)).all()
+                ativos_do_grupo = session.exec(select(AtivoDB).where(AtivoDB.grupo == nome_antigo)).all()
                 for ativo in ativos_do_grupo:
                     ativo.grupo = nome_novo
                     session.add(ativo)
 
             session.commit()
 
-        self.carregar_grupos()
-        self.cancelar_edicao_grupo()
+        self._carregar_grupos_interno()
+        self._limpar_edicao_grupo()
 
-        # Sincroniza a Sala Global (buffer + monitoramento ao vivo) sem precisar recarregar a página
         sala = await self.get_state(AppState)
 
         sala.ativos_buffer = [
@@ -1258,6 +1313,7 @@ class ConfigState(rx.State):
 
         return rx.toast.success(f"Grupo '{nome_antigo}' atualizado!", position="top-right")
 
+
 # 4. ESTADO DE MONITORAMENTO
 class MonitoramentoState(rx.State):
     """Gerencia exclusivamente os pings, ativos e relatórios."""
@@ -1269,12 +1325,12 @@ class MonitoramentoState(rx.State):
     novo_ativo_local: str = ""
     novo_ativo_grupo: str = ""
 
-    # Variáveis de edição de ativo
-    ip_edicao = ""
-    edit_nome = ""
-    edit_ip = ""
-    edit_local = ""
-    edit_grupo = "GERAL"
+    # Variáveis de edição de ativo (tipagem explícita para Reflex 0.10+)
+    ip_edicao: str = ""
+    edit_nome: str = ""
+    edit_ip: str = ""
+    edit_local: str = ""
+    edit_grupo: str = "GERAL"
 
     preview_csv: list[dict[str, str]] = []
     preview_total: int = 0
@@ -1289,9 +1345,80 @@ class MonitoramentoState(rx.State):
     nenhum_resultado: dict[str, bool] = {}
     busca_gerenciamento: str = ""
 
-    ordenacao_campo: dict[str, str] = {}      # {grupo: "nome" | "ip" | "local"}
-    ordenacao_direcao: dict[str, str] = {}    # {grupo: "asc" | "desc"}
+    ordenacao_campo: dict[str, str] = {}          # {grupo: "nome" | "ip" | "local"}
+    ordenacao_direcao: dict[str, str] = {}        # {grupo: "asc" | "desc"}
     ordem_ativos: dict[str, dict[str, int]] = {}  # {grupo: {ip: posição}}
+
+    # --- Setters explícitos ---
+    @rx.event
+    def set_novo_ativo_nome(self, value: str):
+        self.novo_ativo_nome = value
+
+    @rx.event
+    def set_novo_ativo_ip(self, value: str):
+        self.novo_ativo_ip = value
+
+    @rx.event
+    def set_novo_ativo_local(self, value: str):
+        self.novo_ativo_local = value
+
+    @rx.event
+    def set_novo_ativo_grupo(self, value: str):
+        self.novo_ativo_grupo = value
+
+    @rx.event
+    def set_edit_nome(self, value: str):
+        self.edit_nome = value
+
+    @rx.event
+    def set_edit_ip(self, value: str):
+        self.edit_ip = value
+
+    @rx.event
+    def set_edit_local(self, value: str):
+        self.edit_local = value
+
+    @rx.event
+    def set_edit_grupo(self, value: str):
+        self.edit_grupo = value
+
+    def _carregar_ativos_interno(self):
+        with rx.session() as session:
+            grupos_db = session.exec(select(GrupoDB)).all()
+            mapa_cores = {g.nome: g.cor for g in grupos_db}
+            mapa_ininterrupto = {g.nome: g.ininterrupto for g in grupos_db}
+
+            registros = session.exec(select(AtivoDB)).all()
+            self.ativos = [
+                AtivoRede(
+                    nome=a.nome,
+                    ip=a.ip,
+                    local=a.local,
+                    grupo=a.grupo,
+                    cor_grupo=mapa_cores.get(a.grupo, "gray"),
+                    ininterrupto=mapa_ininterrupto.get(a.grupo, False),
+                    status="Aguardando...",
+                    latencia=0.0,
+                    pings_offline=0,
+                    alerta_enviado=False,
+                    historico=[],
+                )
+                for a in registros
+            ]
+
+    def _limpar_preview_csv_interno(self):
+        self.preview_csv = []
+        self.preview_total = 0
+        self.preview_validos = 0
+        self.preview_erros = 0
+        self._arquivo_csv_buffer = []
+
+    def _limpar_edicao_ativo_interno(self):
+        self.ip_edicao = ""
+        self.edit_nome = ""
+        self.edit_ip = ""
+        self.edit_local = ""
+        self.edit_grupo = "GERAL"
 
     async def _recalcular_ordem(self, grupo: str):
         """Recalcula a posição de cada ativo do grupo conforme o campo/direção escolhidos."""
@@ -1371,9 +1498,9 @@ class MonitoramentoState(rx.State):
     def alternar_detalhes_grupo(self, nome_grupo: str):
         """Abre e fecha a gaveta sem afetar o monitor de outras pessoas."""
         if self.grupo_expandido == nome_grupo:
-            self.grupo_expandido = "" # Fecha
+            self.grupo_expandido = ""
         else:
-            self.grupo_expandido = nome_grupo # Abre
+            self.grupo_expandido = nome_grupo
 
     @rx.event
     async def carregar_preview_csv(self, arquivos: list[rx.UploadFile]):
@@ -1391,12 +1518,12 @@ class MonitoramentoState(rx.State):
         ativos_validos = []
 
         with rx.session() as session:
-            grupos_existentes = {g.nome for g in session.exec(GrupoDB.select()).all()}
-            ips_existentes = {a.ip for a in session.exec(AtivoDB.select()).all()}
+            grupos_existentes = {g.nome for g in session.exec(select(GrupoDB)).all()}
+            ips_existentes = {a.ip for a in session.exec(select(AtivoDB)).all()}
 
-        ips_no_csv = set()
+        ips_no_csv: set[str] = set()
 
-        for index, linha in enumerate(leitor_csv, start=1):
+        for linha in leitor_csv:
             nome = linha.get("nome", "").strip()
             ip = linha.get("ip", "").strip()
             local = linha.get("local", "").strip()
@@ -1450,101 +1577,63 @@ class MonitoramentoState(rx.State):
             return rx.toast.error(f"Erro ao salvar no banco: {e}", position="top-right")
 
         total = len(self._arquivo_csv_buffer)
-        self.limpar_preview_csv()
+        self._limpar_preview_csv_interno()
 
         sala = await self.get_state(AppState)
         sala.buffer_iniciado = False
-        await sala.conectar_painel()
+        await AppState.conectar_painel()
 
         return rx.toast.success(f"{total} ativo(s) importado(s) com sucesso!", position="top-right")
 
     @rx.event
     def limpar_preview_csv(self):
         """Reseta o estado de preview."""
-        self.preview_csv = []
-        self.preview_total = 0
-        self.preview_validos = 0
-        self.preview_erros = 0
-        self._arquivo_csv_buffer = []
+        self._limpar_preview_csv_interno()
 
     @rx.event
     def exportar_ativos_csv(self):
         """Busca os dados no banco e gera um CSV para download."""
-        # 1. Puxa a fonte da verdade absoluta (O Banco de Dados)
         with rx.session() as session:
-            ativos_db = session.exec(AtivoDB.select()).all()
-            
+            ativos_db = session.exec(select(AtivoDB)).all()
+
         if not ativos_db:
             return rx.toast.warning("Não há ativos cadastrados para exportar.", position="top-right")
 
-        # 2. Cria um arquivo de texto virtual na memória RAM
         saida_csv = io.StringIO()
-        
-        # 3. Define o cabeçalho EXATAMENTE igual ao esperado na importação
         campos = ["nome", "ip", "local", "grupo"]
         escritor = csv.DictWriter(saida_csv, fieldnames=campos)
-        
         escritor.writeheader()
-        
-        # 4. Preenche as linhas
+
         for ativo in ativos_db:
             escritor.writerow({
                 "nome": ativo.nome,
                 "ip": ativo.ip,
                 "local": ativo.local,
-                "grupo": ativo.grupo
+                "grupo": ativo.grupo,
             })
-            
-        # 5. Extrai o texto final gerado
+
         conteudo_csv = saida_csv.getvalue()
-        
-        # 6. Gera um nome de arquivo elegante com a data de hoje
         data_atual = datetime.now().strftime("%Y-%m-%d_%H-%M")
         nome_arquivo = f"backup_ativos_{data_atual}.csv"
-        
-        # 7. Dispara o gatilho de download nativo do Reflex para o navegador
+
         return [
             rx.download(
                 data=conteudo_csv,
-                filename=nome_arquivo
+                filename=nome_arquivo,
             ),
-            rx.toast.info("Download do backup iniciado!", position="top-right")
+            rx.toast.info("Download do backup iniciado!", position="top-right"),
         ]
 
     @rx.event
     def carregar_ativos(self):
-        with rx.session() as session:
-            grupos_db = session.exec(GrupoDB.select()).all()
-            mapa_cores = {g.nome: g.cor for g in grupos_db}
-            mapa_ininterrupto = {g.nome: g.ininterrupto for g in grupos_db}
-
-            registros = session.exec(AtivoDB.select()).all()
-            self.ativos = [
-                AtivoRede(
-                    nome=a.nome,
-                    ip=a.ip,
-                    local=a.local,
-                    grupo=a.grupo,
-                    cor_grupo=mapa_cores.get(a.grupo, "gray"),
-                    ininterrupto=mapa_ininterrupto.get(a.grupo, False),
-                    status="Aguardando...",
-                    latencia=0.0,
-                    pings_offline=0,
-                    alerta_enviado=False,
-                    historico=[],
-                )
-                for a in registros
-            ]
+        self._carregar_ativos_interno()
 
     @rx.event
     async def on_load(self):
         """Inicializa o buffer com os ativos existentes e joga na tela."""
-        self.carregar_ativos() # Lê o banco de dados e salva no self.ativos (Privado)
-        
-        # Conecta na Sala Global para verificar o status
+        self._carregar_ativos_interno()
+
         sala = await self.get_state(AppState)
-        
-        # Se o motor central estiver DESLIGADO, joga a lista inativa na TV para os usuários verem!
         if not sala.monitorando and len(sala._ativos_live) == 0:
             sala._ativos_live = self.ativos
 
@@ -1556,31 +1645,30 @@ class MonitoramentoState(rx.State):
         sala = await self.get_state(AppState)
         estado_config = await self.get_state(ConfigState)
 
-        # Trava para IPs repetidos no buffer
         for ativo in sala.ativos_buffer:
             if ativo["ip"] == ip_limpo:
                 return rx.toast.warning("Este IP já está na lista!", position="top-right")
-    
+
         if self.novo_ativo_nome and ip_limpo and self.novo_ativo_local and grupo_limpo:
             cor_encontrada = "gray"
             for g in estado_config.grupos:
-                if g["nome"] == grupo_limpo:
-                    cor_encontrada = g["cor"]
+                if g.nome == grupo_limpo:
+                    cor_encontrada = g.cor
                     break
-            
+
             sala.ativos_buffer.append({
                 "nome": self.novo_ativo_nome.strip(),
                 "ip": ip_limpo,
                 "local": self.novo_ativo_local.strip(),
                 "grupo": grupo_limpo,
-                "cor_grupo": cor_encontrada
+                "cor_grupo": cor_encontrada,
             })
 
             self.novo_ativo_nome = ""
             self.novo_ativo_ip = ""
             self.novo_ativo_local = ""
             self.novo_ativo_grupo = ""
-            
+
     @rx.event
     async def remover_ativo_buffer(self, ip_alvo: str):
         sala = await self.get_state(AppState)
@@ -1588,47 +1676,38 @@ class MonitoramentoState(rx.State):
 
     @rx.event
     async def salvar_ativos(self):
-        """Salva a lista do buffer GLOBAL diretamente no Banco de Dados (sem JSON)"""
-        
-        # 1. Pega a prancheta colaborativa da Sala Global PRIMEIRO
+        """Salva a lista do buffer GLOBAL diretamente no Banco de Dados (sem JSON)."""
         sala = await self.get_state(AppState)
-        
+
         with rx.session() as session:
-            # Apaga a tabela antiga
-            todos_antigos = session.exec(AtivoDB.select()).all()
+            todos_antigos = session.exec(select(AtivoDB)).all()
             for antigo in todos_antigos:
                 session.delete(antigo)
-            
+
             session.commit()
 
-            # Insere os ativos usando a lista da SALA GLOBAL (sala.ativos_buffer)
             for item in sala.ativos_buffer:
                 novo_ativo = AtivoDB(
-                    nome=item['nome'], 
-                    ip=item['ip'], 
-                    local=item['local'], 
-                    grupo=item['grupo'],
-                    status="Aguardando..."
+                    nome=item["nome"],
+                    ip=item["ip"],
+                    local=item["local"],
+                    grupo=item["grupo"],
+                    status="Aguardando...",
                 )
                 session.add(novo_ativo)
-                
+
             session.commit()
-            
-        # 2. Recarrega do banco para o estado privado (HD)
-        self.carregar_ativos() 
-        
-        # 3. Mesclagem Inteligente (Atualiza a tela na hora!)
+
+        self._carregar_ativos_interno()
+
         if not sala.monitorando:
-            # Se o sistema estiver pausado, é só jogar a lista nova na tela
             sala._ativos_live = self.ativos
         else:
-            # Se estiver rodando, mantemos o status dos antigos e adicionamos os novos!
             ativos_rodando = {a.ip: a for a in sala._ativos_live}
             nova_lista_global = []
-            
+
             for ativo_base in self.ativos:
                 if ativo_base.ip in ativos_rodando:
-                    # Atualiza os dados de configuração mas mantém o status de ping
                     ativo_mantido = ativos_rodando[ativo_base.ip]
                     ativo_mantido.nome = ativo_base.nome
                     ativo_mantido.local = ativo_base.local
@@ -1636,14 +1715,12 @@ class MonitoramentoState(rx.State):
                     ativo_mantido.cor_grupo = ativo_base.cor_grupo
                     nova_lista_global.append(ativo_mantido)
                 else:
-                    # IP novo
                     nova_lista_global.append(ativo_base)
-            
-            # O Reflex avisa todos os PCs
+
             sala._ativos_live = nova_lista_global
 
         sala._recalcular_resumos()
-            
+
         return rx.toast.success("Ativos atualizados e sincronizados!", position="top-right")
 
     @rx.event
@@ -1661,13 +1738,9 @@ class MonitoramentoState(rx.State):
                 break
 
     @rx.event
-    async def cancelar_edicao_ativo(self):
+    def cancelar_edicao_ativo(self):
         """Fecha o modal e limpa as variáveis."""
-        self.ip_edicao = ""
-        self.edit_nome = ""
-        self.edit_ip = ""
-        self.edit_local = ""
-        self.edit_grupo = "GERAL"
+        self._limpar_edicao_ativo_interno()
 
     @rx.event
     async def salvar_edicao_ativo(self):
@@ -1679,20 +1752,17 @@ class MonitoramentoState(rx.State):
         sala = await self.get_state(AppState)
         estado_config = await self.get_state(ConfigState)
 
-        # Trava: Verifica se o usuário trocou o IP para um que já existe
         if novo_ip != ip_antigo:
             for ativo in sala.ativos_buffer:
                 if ativo["ip"] == novo_ip:
                     return rx.toast.warning("Este IP já pertence a outro ativo!", position="top-right")
 
-        # Busca a cor atualizada do grupo selecionado
         cor_encontrada = "gray"
         for g in estado_config.grupos:
-            if g["nome"] == novo_grupo:
-                cor_encontrada = g["cor"]
+            if g.nome == novo_grupo:
+                cor_encontrada = g.cor
                 break
 
-        # Atualiza a linha exata no buffer
         for ativo in sala.ativos_buffer:
             if ativo["ip"] == ip_antigo:
                 ativo["nome"] = self.edit_nome.strip()
@@ -1702,32 +1772,31 @@ class MonitoramentoState(rx.State):
                 ativo["cor_grupo"] = cor_encontrada
                 break
 
-        await self.cancelar_edicao_ativo() # Fecha o modal
+        self._limpar_edicao_ativo_interno()
         return rx.toast.info("Alteração feita. Clique em 'Salvar' para aplicar no Banco!", position="top-right")
 
     @rx.event
     async def dar_ignicao_global(self):
         sala = await self.get_state(AppState)
-        
+
         if sala.monitorando:
             return rx.toast.info("O servidor já está monitorando!", position="top-right")
 
-        self.carregar_ativos() 
-        
+        self._carregar_ativos_interno()
+
         sala.monitorando = True
-        
-        # Agora ele passa a lista fresca com todos os novos ativos
-        sala._ativos_live = self.ativos 
+        sala._ativos_live = self.ativos
         sala.ciclo += 1
-        
+
         return [AppState.loop_motor_central(), AppState.loop_relatorio(), AppState.loop_watchdog()]
+
 
 # 5. ESTADO DE GERENCIAMENTO DE USUÁRIOS
 class UserManagementState(rx.State):
     """Gerencia a criação e exclusão de usuários do banco de dados."""
 
-    lista_usuarios: list[dict[str, str | int]] = []
-    
+    lista_usuarios: list[dict[str, str]] = []
+
     # Variáveis do formulário de novo usuário
     form_username: str = ""
     form_email: str = ""
@@ -1739,12 +1808,40 @@ class UserManagementState(rx.State):
     nova_senha_input: str = ""
     nova_senha_confirmacao: str = ""
 
+    # --- Setters explícitos ---
+    @rx.event
+    def set_form_username(self, value: str):
+        self.form_username = value
+
+    @rx.event
+    def set_form_email(self, value: str):
+        self.form_email = value
+
+    @rx.event
+    def set_form_password(self, value: str):
+        self.form_password = value
+
+    @rx.event
+    def set_form_is_admin(self, value: bool):
+        self.form_is_admin = value
+
+    @rx.event
+    def set_nova_senha_input(self, value: str):
+        self.nova_senha_input = value
+
+    @rx.event
+    def set_nova_senha_confirmacao(self, value: str):
+        self.nova_senha_confirmacao = value
+
+    def _carregar_usuarios_interno(self):
+        with rx.session() as session:
+            users = session.exec(select(User)).all()
+            self.lista_usuarios = [{"username": u.username, "email": u.email, "role": u.role} for u in users]
+
     @rx.event
     def carregar_usuarios(self):
         """Lê todos os usuários do banco para exibir na tela."""
-        with rx.session() as session:
-            users = session.exec(User.select()).all()
-            self.lista_usuarios = [{"username": u.username, "email": u.email, "role": u.role} for u in users]
+        self._carregar_usuarios_interno()
 
     @rx.event
     def adicionar_usuario(self):
@@ -1753,33 +1850,32 @@ class UserManagementState(rx.State):
             return
 
         with rx.session() as session:
-            # Verifica se já existe
-            registro = session.exec(User.select().where(User.username == self.form_username.lower().strip())).first()
-            
+            registro = session.exec(
+                select(User).where(User.username == self.form_username.lower().strip())
+            ).first()
+
             if registro:
                 yield rx.toast.error("Esse nome de usuário já existe.", position="top-right")
                 return
 
-            # Cria o hash e insere
             salt = bcrypt.gensalt()
-            hashed = bcrypt.hashpw(self.form_password.encode('utf-8'), salt)
-            
+            hashed = bcrypt.hashpw(self.form_password.encode("utf-8"), salt)
+
             novo_usuario = User(
                 username=self.form_username.lower().strip(),
                 email=self.form_email.lower().strip(),
-                password=hashed.decode('utf-8'),
-                role="admin" if self.form_is_admin else "operador"
+                password=hashed.decode("utf-8"),
+                role="admin" if self.form_is_admin else "operador",
             )
             session.add(novo_usuario)
             session.commit()
 
-        # Limpa o formulário e atualiza a lista
         self.form_username = ""
         self.form_password = ""
         self.form_email = ""
         self.form_is_admin = False
         yield rx.toast.success("Usuário criado com sucesso!", position="top-right")
-        self.carregar_usuarios()
+        self._carregar_usuarios_interno()
 
     @rx.event
     def deletar_usuario(self, username: str):
@@ -1788,14 +1884,14 @@ class UserManagementState(rx.State):
             return
 
         with rx.session() as session:
-            user = session.exec(User.select().where(User.username == username)).first()
+            user = session.exec(select(User).where(User.username == username)).first()
             if user:
                 session.delete(user)
                 session.commit()
-        
+
         yield rx.toast.success(f"Usuário '{username}' deletado.", position="top-right")
-        self.carregar_usuarios()
-    
+        self._carregar_usuarios_interno()
+
     @rx.event
     def iniciar_edicao_senha(self, username: str):
         """Abre o formulário de senha no cartão do usuário específico."""
@@ -1816,24 +1912,25 @@ class UserManagementState(rx.State):
         if not self.nova_senha_input or not self.nova_senha_confirmacao:
             return rx.toast.error("Preencha ambos os campos de senha.", position="top-right")
 
-        # VALIDAÇÃO DE CONFIRMAÇÃO
         if self.nova_senha_input != self.nova_senha_confirmacao:
             return rx.toast.error("As senhas não coincidem. Tente novamente.", position="top-right")
 
         with rx.session() as session:
-            user = session.exec(User.select().where(User.username == self.usuario_edicao)).first()
-            
+            user = session.exec(
+                select(User).where(User.username == self.usuario_edicao)
+            ).first()
+
             if user:
                 salt = bcrypt.gensalt()
-                hashed = bcrypt.hashpw(self.nova_senha_input.encode('utf-8'), salt)
-                
-                user.password = hashed.decode('utf-8')
+                hashed = bcrypt.hashpw(self.nova_senha_input.encode("utf-8"), salt)
+
+                user.password = hashed.decode("utf-8")
                 session.add(user)
                 session.commit()
-                
+
                 self.usuario_edicao = ""
                 self.nova_senha_input = ""
-                self.nova_senha_confirmacao = ""    
+                self.nova_senha_confirmacao = ""
                 return rx.toast.success(f"Senha de '{user.username}' alterada!", position="top-right")
             else:
                 self.usuario_edicao = ""

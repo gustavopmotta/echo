@@ -1,14 +1,41 @@
-import reflex as rx
-from .states import AppState, AuthState, ConfigState, MonitoramentoState, UserManagementState, AtivoRede, ResumoGrupo
+from typing import Literal
 
-radix_colors = ['tomato', 'red', 'ruby', 'crimson', 'pink', 'plum', 'purple', 'violet', 'iris', 'indigo', 'blue', 'cyan', 'teal', 'jade', 'green', 'grass', 'brown', 'orange', 'sky', 'mint', 'lime', 'yellow', 'amber', 'gold', 'bronze', 'gray']
+import reflex as rx
+from .states import (
+    AppState,
+    AtivoRede,
+    AuthState,
+    ConfigState,
+    GrupoItem,
+    MonitoramentoState,
+    ResumoGrupo,
+    UserManagementState,
+)
+
+AccentColor = Literal[
+    "tomato", "red", "ruby", "crimson", "pink", "plum", "purple", "violet",
+    "iris", "indigo", "blue", "cyan", "teal", "jade", "green", "grass",
+    "brown", "orange", "sky", "mint", "lime", "yellow", "amber", "gold",
+    "bronze", "gray",
+]
+
+radix_colors: list[AccentColor] = [
+    "tomato", "red", "ruby", "crimson", "pink", "plum", "purple", "violet",
+    "iris", "indigo", "blue", "cyan", "teal", "jade", "green", "grass",
+    "brown", "orange", "sky", "mint", "lime", "yellow", "amber", "gold",
+    "bronze", "gray",
+]
 
 DIAS_SEMANA = [(1, "Seg"), (2, "Ter"), (3, "Qua"), (4, "Qui"), (5, "Sex"), (6, "Sáb"), (7, "Dom")]
 
+
 # --- CARD DE ATIVO ---
-def renderizar_card(ativo: AtivoRede):
-    cor_status = rx.cond(ativo.status == "Online", "green",
-                 rx.cond(ativo.status == "Lento", "orange", "red"))
+def renderizar_card(ativo: AtivoRede) -> rx.Component:
+    cor_status = rx.cond(
+        ativo.status == "Online",
+        "green",
+        rx.cond(ativo.status == "Lento", "orange", "red"),
+    )
 
     grafico_aberto = MonitoramentoState.ip_grafico_aberto == ativo.ip
 
@@ -18,7 +45,9 @@ def renderizar_card(ativo: AtivoRede):
                 rx.vstack(
                     rx.hstack(
                         rx.box(
-                            width="8px", height="8px", border_radius="50%",
+                            width="8px",
+                            height="8px",
+                            border_radius="50%",
                             background=rx.color(cor_status, 9),
                         ),
                         rx.text(ativo.nome, weight="bold"),
@@ -26,7 +55,14 @@ def renderizar_card(ativo: AtivoRede):
                         align_items="center",
                     ),
                     rx.hstack(
-                        rx.text(f"{ativo.ip}", color="gray", size="1", transition="filter 0.2s ease", filter="blur(3px)", _hover={"filter": "blur(0px)"}),
+                        rx.text(
+                            f"{ativo.ip}",
+                            color="gray",
+                            size="1",
+                            transition="filter 0.2s ease",
+                            filter="blur(3px)",
+                            _hover={"filter": "blur(0px)"},
+                        ),
                         rx.text(f"• {ativo.local}", color="gray", size="1"),
                         spacing="1",
                     ),
@@ -47,7 +83,7 @@ def renderizar_card(ativo: AtivoRede):
                     ),
                     spacing="0",
                     align_items="end",
-                ),            
+                ),
                 rx.icon_button(
                     rx.cond(grafico_aberto, rx.icon("chevron_up"), rx.icon("chevron_down")),
                     on_click=MonitoramentoState.alternar_grafico_ativo(ativo.ip),
@@ -58,7 +94,6 @@ def renderizar_card(ativo: AtivoRede):
                 width="100%",
                 align_items="center",
             ),
-
             # Só monta o gráfico se este for o ativo selecionado
             rx.cond(
                 grafico_aberto,
@@ -80,7 +115,6 @@ def renderizar_card(ativo: AtivoRede):
                     margin_top="0.5em",
                 ),
             ),
-
             width="100%",
             spacing="1",
         ),
@@ -90,11 +124,13 @@ def renderizar_card(ativo: AtivoRede):
         padding="0.75em",
     )
 
+
 # --- CARD DE GRUPO (resumo sempre visível, detalhes sob demanda) ---
-def renderizar_bloco_grupo(resumo: ResumoGrupo):
+def renderizar_bloco_grupo(resumo: ResumoGrupo) -> rx.Component:
     cor_borda = rx.cond(
-        resumo.offline > 0, "red",
-        rx.cond(resumo.lentos > 0, "orange", "green")
+        resumo.offline > 0,
+        "red",
+        rx.cond(resumo.lentos > 0, "orange", "green"),
     )
 
     termo_busca = MonitoramentoState.busca_ativos.get(resumo.nome, "")
@@ -104,10 +140,11 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
     campo_ordenacao = MonitoramentoState.ordenacao_campo.get(resumo.nome, "nome")
     direcao_ordenacao = MonitoramentoState.ordenacao_direcao.get(resumo.nome, "asc")
 
-    def badge_filtro(label: str, contador, cor: str, chave_status: str):
+    def badge_filtro(label: str, contador, cor: AccentColor, chave_status: str) -> rx.Component:
         ativo_selecionado = status_filtro == chave_status
         return rx.badge(
-            contador, f" {label}",
+            contador,
+            f" {label}",
             color_scheme=cor,
             variant=rx.cond(ativo_selecionado, "solid", "soft"),
             cursor="pointer",
@@ -133,11 +170,13 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
             on_click=MonitoramentoState.set_ordenacao(resumo.nome, campo),
         )
 
-    def card_filtravel(ativo: AtivoRede):
+    def card_filtravel(ativo: AtivoRede) -> rx.Component:
+        nome_var = rx.Var.create(ativo.nome).to(str)
+        ip_var = rx.Var.create(ativo.ip).to(str)
         passa_busca = (
             (termo_busca == "")
-            | ativo.nome.lower().contains(termo_busca.lower())
-            | ativo.ip.contains(termo_busca)
+            | nome_var.lower().contains(termo_busca.lower())
+            | ip_var.contains(termo_busca)
         )
         passa_status = (status_filtro == "Todos") | (ativo.status == status_filtro)
 
@@ -155,13 +194,21 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 rx.flex(
                     rx.hstack(
                         rx.box(
-                            width="12px", height="12px", border_radius="50%",
+                            width="12px",
+                            height="12px",
+                            border_radius="50%",
                             background=rx.color(cor_borda, 9),
                         ),
                         rx.heading(resumo.nome, size="6"),
-                        rx.cond(resumo.ininterrupto, rx.tooltip(rx.icon("clock_fading", color_scheme="blue", variant="surface", size=20), content="Este grupo é ininterrupto")),
-                        align_items="center"
-                    ),                               
+                        rx.cond(
+                            resumo.ininterrupto,
+                            rx.tooltip(
+                                rx.icon("clock_fading", color=rx.color("blue", 9), size=20),
+                                content="Este grupo é ininterrupto",
+                            ),
+                        ),
+                        align_items="center",
+                    ),
                     align="baseline",
                     direction="row",
                     width="stretch",
@@ -176,9 +223,7 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 align_items="center",
                 margin_top="0.25em",
             ),
-
             rx.divider(margin_y="0.25em"),
-
             rx.hstack(
                 rx.debounce_input(
                     rx.input(
@@ -191,7 +236,6 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                     ),
                     debounce_timeout=250,
                 ),
-
                 rx.menu.root(
                     rx.menu.trigger(
                         rx.icon_button(
@@ -207,11 +251,9 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                         item_ordenacao("Localização", "local"),
                     ),
                 ),
-
                 spacing="2",
                 width="100%",
             ),
-
             rx.scroll_area(
                 rx.vstack(
                     rx.foreach(resumo.ativos_lista, card_filtravel),
@@ -222,7 +264,6 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                 type="scroll",
                 style={"max_height": "22rem", "min_height": "22rem"},
             ),
-
             rx.cond(
                 sem_resultado,
                 rx.vstack(
@@ -230,10 +271,9 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
                     rx.icon("search_x", size=50, color="gray"),
                     width="100%",
                     align_items="center",
-                    padding="2em"
+                    padding="2em",
                 ),
             ),
-
             align_items="start",
             width="100%",
         ),
@@ -241,7 +281,9 @@ def renderizar_bloco_grupo(resumo: ResumoGrupo):
         margin_bottom="4",
     )
 
+
 # --- TELA DE LOGIN ---
+@rx.page(route="/login", title="Login • Echo", on_load=AuthState.checar_acesso_login)
 def tela_login() -> rx.Component:
     return rx.center(
         rx.form(
@@ -250,53 +292,61 @@ def tela_login() -> rx.Component:
                     rx.image(src="/icon-white256x256.svg", alt="Logo", width="6em", margin_bottom="1em"),
                     rx.heading("Bem-vindo ao Echo!", size="7"),
                     rx.text("Faça login com sua conta", size="3", text_align="center", color="gray", margin_bottom="0.5em"),
-
                     rx.vstack(
                         rx.text("Email", size="3", weight="medium", width="100%", text_align="left"),
                         rx.input(
                             rx.input.slot(rx.icon("user")),
-                            placeholder="usuário@echo.com", 
+                            placeholder="usuário@echo.com",
                             on_change=AuthState.set_email_input,
                             value=AuthState.email_input,
                             width="100%",
-                            size="3"
+                            size="3",
                         ),
                         width="100%",
                         justify="start",
-                        spacing="1"
+                        spacing="1",
                     ),
-
                     rx.vstack(
                         rx.text("Senha", size="3", weight="medium", width="100%", text_align="left"),
                         rx.input(
                             rx.input.slot(rx.icon("lock")),
-                            type="password", 
+                            type="password",
                             placeholder="**********",
                             on_change=AuthState.set_senha_input,
                             value=AuthState.senha_input,
                             width="100%",
-                            size="3"
+                            size="3",
                         ),
                         width="100%",
                         justify="start",
-                        spacing="1"
+                        spacing="1",
                     ),
-                    rx.button("Fazer Login", on_click=AuthState.tentar_login, width="100%", color_scheme="blue", size="3", weight="bold", type="submit", loading=AuthState.tentando_login),
-
+                    rx.button(
+                        "Fazer Login",
+                        width="100%",
+                        color_scheme="blue",
+                        size="3",
+                        font_weight="bold",
+                        type="submit",
+                        loading=AuthState.tentando_login,
+                    ),
                     align_items="center",
                     spacing="3",
-                    width="100%"
+                    width="100%",
                 ),
+                size="4",
                 padding="2em",
             ),
-            size="4",
+            on_submit=AuthState.tentar_login,
             width="100%",
             max_width="24em",
         ),
-        height="100vh"
+        height="100vh",
     )
 
+
 # --- TELA DE SETUP INICIAL ---
+@rx.page(route="/setup", title="Configuração Inicial • Echo")
 def tela_setup_inicial() -> rx.Component:
     return rx.center(
         rx.form(
@@ -305,22 +355,21 @@ def tela_setup_inicial() -> rx.Component:
                     rx.image(src="/icon-white256x256.svg", alt="Logo", width="6em", margin_bottom="1em"),
                     rx.heading("Bem-vindo ao Echo!", size="7"),
                     rx.text("Crie o usuário Administrador para inicializar o sistema.", size="1", text_align="center", color="gray", margin_bottom="1em"),
-
                     rx.input(
                         rx.input.slot(rx.icon("user_star")),
-                        placeholder="Nome do Administrador", 
+                        placeholder="Nome do Administrador",
                         on_change=AuthState.set_setup_username,
                         value=AuthState.setup_username,
                         width="100%",
-                        auto_complete=False
+                        auto_complete="off",
                     ),
                     rx.input(
                         rx.input.slot(rx.icon("mail")),
-                        placeholder="Email do Administrador", 
+                        placeholder="Email do Administrador",
                         on_change=AuthState.set_setup_email,
                         value=AuthState.setup_email,
                         width="100%",
-                        auto_complete=False
+                        auto_complete="off",
                     ),
                     rx.input(
                         rx.input.slot(rx.icon("lock")),
@@ -329,31 +378,39 @@ def tela_setup_inicial() -> rx.Component:
                         on_change=AuthState.set_setup_password,
                         value=AuthState.setup_password,
                         width="100%",
-                        auto_complete=False
+                        auto_complete="off",
                     ),
                     rx.input(
                         rx.input.slot(rx.icon("lock")),
-                        type="password", 
+                        type="password",
                         placeholder="Confirme a Senha",
                         on_change=AuthState.set_setup_confirmacao,
                         value=AuthState.setup_confirmacao,
                         width="100%",
-                        auto_complete=False
+                        auto_complete="off",
                     ),
-
-                    rx.button("Criar Administrador", on_click=AuthState.registrar_primeiro_admin, width="100%", color_scheme="purple", size="3", weight="bold", type="submit", loading=AuthState.tentando_login),
-
+                    rx.button(
+                        "Criar Administrador",
+                        width="100%",
+                        color_scheme="purple",
+                        size="3",
+                        font_weight="bold",
+                        type="submit",
+                        loading=AuthState.tentando_login,
+                    ),
                     align_items="center",
-                    spacing="4"
+                    spacing="4",
                 ),
-                padding="2em"
+                size="4",
+                padding="2em",
             ),
-            size="4",
+            on_submit=AuthState.registrar_primeiro_admin,
             width="100%",
             max_width="24em",
         ),
-        height="100vh"
+        height="100vh",
     )
+
 
 # --- CAIXA/ABA DE CONFIGURAÇÕES GERAIS ---
 def configurações_gerais() -> rx.Component:
@@ -364,29 +421,25 @@ def configurações_gerais() -> rx.Component:
                 "Configurações",
                 color_scheme="blue",
                 variant="surface",
-                disabled=AppState.monitorando | AuthState.role_logado != "admin",
+                disabled=AppState.monitorando | (AuthState.role_logado != "admin"),
                 width="100%",
                 justify_content="start",
             )
         ),
-
         rx.dialog.content(
             rx.dialog.title("Configurações Gerais", padding_top="1em"),
             rx.dialog.description("Ajuste os parâmetros do servidor e do monitoramento de rede."),
             rx.divider(margin_y="1em"),
-        
-            # Scroll area previne que o modal fique gigante na tela
             rx.cond(
                 AuthState.role_logado != "admin",
-        
                 rx.callout("Acesso restrito para administradores.", icon="shield_check", color_scheme="red", variant="soft"),
-        
                 rx.scroll_area(
                     rx.vstack(
                         rx.text("Dias de Envio do Relatório", weight="bold"),
                         rx.text(
                             "O relatório periódico só é disparado nos dias marcados. Alertas de ativos críticos (ininterruptos) continuam valendo todos os dias.",
-                            size="1", color="gray"
+                            size="1",
+                            color="gray",
                         ),
                         rx.flex(
                             *[
@@ -395,7 +448,8 @@ def configurações_gerais() -> rx.Component:
                                     on_click=ConfigState.alternar_dia_operacao(numero),
                                     variant=rx.cond(
                                         ConfigState.dias_operacao_buffer.contains(numero),
-                                        "solid", "soft"
+                                        "solid",
+                                        "soft",
                                     ),
                                     color_scheme="purple",
                                     size="1",
@@ -407,9 +461,7 @@ def configurações_gerais() -> rx.Component:
                             wrap="wrap",
                             width="100%",
                         ),
-
                         rx.divider(margin_y=".5em"),
-
                         # SEÇÃO 1: SERVIDOR DE E-MAIL
                         rx.text("Servidor de E-mail (SMTP)", weight="bold", padding_top="0.5em"),
                         rx.hstack(
@@ -420,7 +472,7 @@ def configurações_gerais() -> rx.Component:
                                     on_change=lambda v: ConfigState.atualizar_buffer("smtp_server", v),
                                     placeholder="mail.dominio.com.br",
                                     width="100%",
-                                    auto_complete=False
+                                    auto_complete="off",
                                 ),
                                 spacing="1",
                                 flex="1",
@@ -432,15 +484,14 @@ def configurações_gerais() -> rx.Component:
                                     on_change=lambda v: ConfigState.atualizar_buffer("smtp_port", v),
                                     placeholder="465",
                                     width="100%",
-                                    auto_complete=False
+                                    auto_complete="off",
                                 ),
                                 spacing="1",
-                                flex="1"
+                                flex="1",
                             ),
                             spacing="2",
                             width="100%",
                         ),
-        
                         rx.hstack(
                             rx.vstack(
                                 rx.text("Login:", size="2"),
@@ -449,10 +500,10 @@ def configurações_gerais() -> rx.Component:
                                     on_change=lambda v: ConfigState.atualizar_buffer("smtp_login", v),
                                     placeholder="alertas@dominio.com.br",
                                     width="100%",
-                                    auto_complete=False
+                                    auto_complete="off",
                                 ),
                                 spacing="1",
-                                flex="1"
+                                flex="1",
                             ),
                             rx.vstack(
                                 rx.text("Senha:", size="2"),
@@ -462,17 +513,15 @@ def configurações_gerais() -> rx.Component:
                                     type="password",
                                     placeholder="********",
                                     width="100%",
-                                    auto_complete=False
+                                    auto_complete="off",
                                 ),
                                 spacing="1",
-                                flex="1"
+                                flex="1",
                             ),
                             spacing="2",
                             width="100%",
                         ),
-        
                         rx.divider(margin_y=".5em"),
-        
                         # SEÇÃO 2: REGRAS DE MONITORAMENTO
                         rx.text("Regras de Monitoramento", weight="bold"),
                         rx.hstack(
@@ -482,7 +531,7 @@ def configurações_gerais() -> rx.Component:
                                     value=ConfigState.config_buffer["intervalo_segundos"],
                                     on_change=lambda v: ConfigState.atualizar_buffer("intervalo_segundos", v),
                                     placeholder="10",
-                                    width="100%"
+                                    width="100%",
                                 ),
                                 spacing="1",
                                 flex="1",
@@ -493,10 +542,10 @@ def configurações_gerais() -> rx.Component:
                                     value=ConfigState.config_buffer["limite_latencia_ms"],
                                     on_change=lambda v: ConfigState.atualizar_buffer("limite_latencia_ms", v),
                                     placeholder="100",
-                                    width="100%"
+                                    width="100%",
                                 ),
                                 spacing="1",
-                                flex="1"
+                                flex="1",
                             ),
                         ),
                         rx.hstack(
@@ -506,7 +555,7 @@ def configurações_gerais() -> rx.Component:
                                     value=ConfigState.config_buffer["pings_maximos"],
                                     on_change=lambda v: ConfigState.atualizar_buffer("pings_maximos", v),
                                     placeholder="12",
-                                    width="100%"
+                                    width="100%",
                                 ),
                                 spacing="1",
                                 flex="1",
@@ -517,34 +566,33 @@ def configurações_gerais() -> rx.Component:
                                     value=ConfigState.config_buffer["frequencia_emails"],
                                     on_change=lambda v: ConfigState.atualizar_buffer("frequencia_emails", v),
                                     placeholder="60",
-                                    width="100%"
+                                    width="100%",
                                 ),
                                 spacing="1",
-                                flex="1"
+                                flex="1",
                             ),
                         ),
                         width="100%",
                         align_items="stretch",
                     ),
                     type="scroll",
-                    style={"max_height": "50vh", "min_height": "50vh"}, # Limita a altura para caber em telas menores
-                    padding_right="1em"
+                    style={"max_height": "50vh", "min_height": "50vh"},
+                    padding_right="1em",
                 ),
             ),
-            
             rx.divider(margin_y="1em"),
-            
             rx.button(
                 rx.icon("save"),
-                "Salvar Alterações", 
-                on_click=ConfigState.salvar_configs_env, 
+                "Salvar Alterações",
+                on_click=ConfigState.salvar_configs_env,
                 color_scheme="purple",
                 variant="soft",
-                width="100%" 
+                width="100%",
             ),
             width="35%",
         ),
-    ),
+    )
+
 
 # --- CAIXA/ABA DE CONFIGURAÇÕES DE ATIVOS ---
 def configurações_ativos() -> rx.Component:
@@ -554,109 +602,94 @@ def configurações_ativos() -> rx.Component:
                 rx.alert_dialog.trigger(
                     rx.icon_button(rx.icon("plus"), color_scheme="green", variant="soft")
                 ),
-                content="Adicionar Ativo"
+                content="Adicionar Ativo",
             ),
-            
-
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Adicionar Ativo de Rede"),
                 rx.alert_dialog.description("Preencha os detalhes do novo dispositivo."),
-
                 rx.divider(margin_y="1em"),
-
                 rx.form(
                     rx.vstack(
                         rx.hstack(
                             rx.input(
                                 rx.input.slot(rx.icon("tag")),
-                                placeholder="Nome do Ativo", 
+                                placeholder="Nome do Ativo",
                                 on_change=MonitoramentoState.set_novo_ativo_nome,
                                 value=MonitoramentoState.novo_ativo_nome,
                                 flex="1",
                             ),
-
                             rx.select(
-                                ConfigState.nomes_dos_grupos, # Variável da lista de grupos
+                                ConfigState.nomes_dos_grupos,
                                 value=MonitoramentoState.novo_ativo_grupo,
                                 on_change=MonitoramentoState.set_novo_ativo_grupo,
                                 placeholder="Grupo",
                             ),
-
                             width="100%",
                         ),
                         rx.hstack(
                             rx.input(
                                 rx.input.slot(rx.icon("network")),
-                                placeholder="Endereço IP", 
-                                on_change=MonitoramentoState.set_novo_ativo_ip, 
+                                placeholder="Endereço IP",
+                                on_change=MonitoramentoState.set_novo_ativo_ip,
                                 value=MonitoramentoState.novo_ativo_ip,
-                                width="100%"
+                                width="100%",
                             ),
                             rx.input(
                                 rx.input.slot(rx.icon("map_pin")),
-                                placeholder="Localização", 
-                                on_change=MonitoramentoState.set_novo_ativo_local, 
+                                placeholder="Localização",
+                                on_change=MonitoramentoState.set_novo_ativo_local,
                                 value=MonitoramentoState.novo_ativo_local,
-                                width="100%"
+                                width="100%",
                             ),
                         ),
-
                         rx.flex(
                             rx.alert_dialog.cancel(
                                 rx.button(
-                                    "Cancelar", 
-                                    color_scheme="gray", 
-                                    variant="soft"
+                                    "Cancelar",
+                                    color_scheme="gray",
+                                    variant="soft",
                                 )
                             ),
                             rx.alert_dialog.action(
                                 rx.button(
-                                    "Adicionar", 
-                                    type="submit", 
-                                    color_scheme="green"
+                                    "Adicionar",
+                                    type="submit",
+                                    color_scheme="green",
                                 ),
                             ),
-
                             spacing="3",
                             justify="end",
                             width="100%",
                         ),
-
                         spacing="3",
                     ),
                     on_submit=MonitoramentoState.adicionar_ativo_buffer,
                 ),
-                
-
                 width="30%",
-                open=MonitoramentoState.novo_ativo_nome != ""
             ),
-        ),
+        )
 
     def modal_edicao_ativo() -> rx.Component:
         return rx.alert_dialog.root(
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Editar Ativo de Rede"),
                 rx.alert_dialog.description("Atualize os detalhes do dispositivo."),
-
                 rx.divider(margin_y="1em"),
-
                 rx.vstack(
                     rx.hstack(
                         rx.input(
-                                rx.input.slot(rx.icon("tag")),
-                                type="text",
-                                value=MonitoramentoState.edit_nome,
-                                placeholder="Nome do Ativo",
-                                on_change=MonitoramentoState.set_edit_nome,
-                                flex="1",
-                            ),
-
+                            rx.input.slot(rx.icon("tag")),
+                            type="text",
+                            value=MonitoramentoState.edit_nome,
+                            placeholder="Nome do Ativo",
+                            on_change=MonitoramentoState.set_edit_nome,
+                            flex="1",
+                        ),
                         rx.select(
                             ConfigState.nomes_dos_grupos,
                             value=MonitoramentoState.edit_grupo,
                             placeholder="Grupo",
-                            on_change=MonitoramentoState.set_edit_grupo                  
+                            on_change=MonitoramentoState.set_edit_grupo,
                         ),
                         width="100%",
                     ),
@@ -666,36 +699,43 @@ def configurações_ativos() -> rx.Component:
                             value=MonitoramentoState.edit_ip,
                             placeholder="Endereço IP",
                             on_change=MonitoramentoState.set_edit_ip,
-                            width="100%"
+                            width="100%",
                         ),
                         rx.input(
                             rx.input.slot(rx.icon("map-pin")),
                             value=MonitoramentoState.edit_local,
                             placeholder="Localização",
                             on_change=MonitoramentoState.set_edit_local,
-                            width="100%"
+                            width="100%",
                         ),
                         width="100%",
                     ),
-
                     rx.flex(
                         rx.alert_dialog.cancel(
-                            rx.button("Cancelar", on_click=MonitoramentoState.cancelar_edicao_ativo,    color_scheme="gray", variant="soft")
+                            rx.button(
+                                "Cancelar",
+                                on_click=MonitoramentoState.cancelar_edicao_ativo,
+                                color_scheme="gray",
+                                variant="soft",
+                            )
                         ),
                         rx.alert_dialog.action(
-                            rx.button("Atualizar", on_click=MonitoramentoState.salvar_edicao_ativo,     color_scheme="blue", variant="soft")
+                            rx.button(
+                                "Atualizar",
+                                on_click=MonitoramentoState.salvar_edicao_ativo,
+                                color_scheme="blue",
+                                variant="soft",
+                            )
                         ),
                         spacing="3",
                         justify="end",
-                        width="100%"
+                        width="100%",
                     ),
-
                     spacing="3",
                 ),
-
-                width="30%",       
+                width="30%",
             ),
-            open=MonitoramentoState.ip_edicao != "", 
+            open=MonitoramentoState.ip_edicao != "",
         )
 
     def modal_importacao() -> rx.Component:
@@ -704,35 +744,31 @@ def configurações_ativos() -> rx.Component:
                 rx.alert_dialog.trigger(
                     rx.icon_button(rx.icon("download"), color_scheme="green", variant="soft")
                 ),
-                content="Importar CSV"
+                content="Importar CSV",
             ),
-
             rx.alert_dialog.content(
                 rx.alert_dialog.title("Importar Ativos via CSV"),
                 rx.alert_dialog.description(
                     "O arquivo deve conter as colunas: ",
                     rx.code("nome, ip, local, grupo"),
-                    ". IPs já cadastrados serão ignorados. Certifique-se de que os grupos existam antes de importar."
+                    ". IPs já cadastrados serão ignorados. Certifique-se de que os grupos existam antes de importar.",
                 ),
-
                 rx.divider(margin_y="1em"),
-
                 rx.vstack(
-                    # Área de upload — some quando há preview
                     rx.cond(
-                        ~MonitoramentoState.preview_total > 0,
+                        MonitoramentoState.preview_total == 0,
                         rx.upload(
                             rx.vstack(
                                 rx.icon("file_up", size=30, color="gray"),
                                 rx.text(
                                     "Clique ou arraste o arquivo CSV aqui",
                                     color="gray",
-                                    font_weight="bold"
+                                    font_weight="bold",
                                 ),
                                 rx.text(
                                     "Uma pré-visualização aparecerá antes de confirmar.",
                                     size="2",
-                                    color="gray"
+                                    color="gray",
                                 ),
                                 spacing="1",
                                 align_items="center",
@@ -753,12 +789,11 @@ def configurações_ativos() -> rx.Component:
                                 rx.text(
                                     f"{MonitoramentoState.preview_total} linha(s) encontrada(s)",
                                     size="2",
-                                    color="gray"
+                                    color="gray",
                                 ),
                                 spacing="1",
                                 align_items="center",
                             ),
-
                             rx.scroll_area(
                                 rx.table.root(
                                     rx.table.header(
@@ -787,7 +822,7 @@ def configurações_ativos() -> rx.Component:
                                                         rx.badge("OK", color_scheme="green", variant="soft"),
                                                     )
                                                 ),
-                                            )
+                                            ),
                                         )
                                     ),
                                     variant="surface",
@@ -796,29 +831,25 @@ def configurações_ativos() -> rx.Component:
                                 type="scroll",
                                 style={"max_height": "35vh", "min_height": "35vh"},
                             ),
-
                             rx.hstack(
                                 rx.badge(
                                     rx.icon("check", size=12),
                                     f"{MonitoramentoState.preview_validos} válido(s)",
                                     color_scheme="green",
-                                    variant="soft"
+                                    variant="soft",
                                 ),
                                 rx.badge(
                                     rx.icon("x", size=12),
                                     f"{MonitoramentoState.preview_erros} com erro(s)",
                                     color_scheme="red",
-                                    variant="soft"
+                                    variant="soft",
                                 ),
                                 spacing="2",
                             ),
-
                             width="100%",
                             spacing="2",
                         ),
                     ),
-
-                    # Botões de ação
                     rx.hstack(
                         rx.alert_dialog.cancel(
                             rx.button(
@@ -829,7 +860,7 @@ def configurações_ativos() -> rx.Component:
                             )
                         ),
                         rx.cond(
-                            MonitoramentoState.preview_csv != [],
+                            MonitoramentoState.preview_total > 0,
                             rx.alert_dialog.action(
                                 rx.button(
                                     rx.icon("check", size=16),
@@ -845,23 +876,19 @@ def configurações_ativos() -> rx.Component:
                         justify="end",
                         width="100%",
                     ),
-
                     width="100%",
                     spacing="3",
                     padding="4",
                 ),
-
                 width="45%",
-            )
+            ),
         )
 
     def tab_gerenciar_ativos() -> rx.Component:
         return rx.tabs.content(
             rx.dialog.title("Gerenciar Ativos de Rede", padding_top="1em"),
             rx.dialog.description("Adicione ou remova dispositivos. O monitoramento será pausado durante a edição."),
-        
             rx.divider(margin_y="1em"),
-    
             rx.debounce_input(
                 rx.input(
                     rx.input.slot(rx.icon("search", size=14)),
@@ -869,149 +896,172 @@ def configurações_ativos() -> rx.Component:
                     value=MonitoramentoState.busca_gerenciamento,
                     on_change=MonitoramentoState.set_busca_gerenciamento,
                     width="100%",
-                    margin_bottom="1em"
+                    margin_bottom="1em",
                 ),
                 debounce_timeout=250,
             ),
-        
             rx.vstack(
-                # Lista de ativos no buffer
                 rx.scroll_area(
                     rx.vstack(
                         rx.foreach(
-                            AppState.ativos_buffer, 
+                            AppState.ativos_buffer,
                             lambda ativo: rx.cond(
-                            (MonitoramentoState.busca_gerenciamento == "")
-                            | ativo["nome"].lower().contains(MonitoramentoState.busca_gerenciamento.lower())
-                            | ativo["ip"].contains(MonitoramentoState.busca_gerenciamento)
-                            | ativo["local"].lower().contains(MonitoramentoState.busca_gerenciamento.lower())
-                            | ativo["grupo"].lower().contains(MonitoramentoState.busca_gerenciamento.lower()),
-    
+                                (MonitoramentoState.busca_gerenciamento == "")
+                                | ativo["nome"].lower().contains(MonitoramentoState.busca_gerenciamento.lower())
+                                | ativo["ip"].contains(MonitoramentoState.busca_gerenciamento)
+                                | ativo["local"].lower().contains(MonitoramentoState.busca_gerenciamento.lower())
+                                | ativo["grupo"].lower().contains(MonitoramentoState.busca_gerenciamento.lower()),
                                 rx.card(
                                     rx.hstack(
                                         rx.vstack(
                                             rx.hstack(
                                                 rx.text(ativo["nome"], font_weight="bold"),
                                                 rx.badge(ativo["grupo"], color_scheme=ativo["cor_grupo"], variant="surface"),
-        
                                                 align_items="center",
-                                                spacing="1"
+                                                spacing="1",
                                             ),
                                             rx.hstack(
-                                                rx.text(f"{ativo["nome"]}", color="gray", size="1", transition="filter 0.2s ease", filter="blur(3px)", _hover={"filter": "blur(0px)"}),
-                                                rx.text(f"• {ativo["local"]}", color="gray", size="1"),
+                                                rx.text(
+                                                    f"{ativo['ip']}",
+                                                    color="gray",
+                                                    size="1",
+                                                    transition="filter 0.2s ease",
+                                                    filter="blur(3px)",
+                                                    _hover={"filter": "blur(0px)"},
+                                                ),
+                                                rx.text(f"• {ativo['local']}", color="gray", size="1"),
                                                 spacing="1",
                                             ),
                                             spacing="0",
                                             align_items="start",
-                                            width="100%"
+                                            width="100%",
                                         ),
-        
                                         rx.hstack(
-                                            rx.tooltip(rx.icon_button(rx.icon("pencil"), on_click=MonitoramentoState.iniciar_edicao_ativo(ativo["ip"]), color_scheme="blue", variant="soft"), content="Editar Ativo"),
-        
-                                            rx.tooltip(rx.icon_button(rx.icon("trash"), on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]), color_scheme="red", variant="soft"), content="Remover Ativo"),
-                                        ),             
-        
+                                            rx.tooltip(
+                                                rx.icon_button(
+                                                    rx.icon("pencil"),
+                                                    on_click=MonitoramentoState.iniciar_edicao_ativo(ativo["ip"]),
+                                                    color_scheme="blue",
+                                                    variant="soft",
+                                                ),
+                                                content="Editar Ativo",
+                                            ),
+                                            rx.tooltip(
+                                                rx.icon_button(
+                                                    rx.icon("trash"),
+                                                    on_click=MonitoramentoState.remover_ativo_buffer(ativo["ip"]),
+                                                    color_scheme="red",
+                                                    variant="soft",
+                                                ),
+                                                content="Remover Ativo",
+                                            ),
+                                        ),
                                         width="100%",
                                         align_items="center",
                                     ),
-        
                                     width="100%",
                                 ),
                             ),
                         ),
-        
                         spacing="2",
                         padding_right="0.1em",
                     ),
-        
                     type="scroll",
                     style={"max_height": "40vh", "min_height": "40vh"},
-                    
                 ),
-        
                 rx.divider(),
-                
                 align_items="stretch",
                 width="100%",
                 padding_bottom="1em",
             ),
-            # Botões de Ação do Modal
-    
             rx.hstack(
                 modal_adicionar_ativo(),
                 modal_importacao(),
-    
                 rx.tooltip(
-                    rx.icon_button(rx.icon("upload"), on_click=MonitoramentoState.exportar_ativos_csv, color_scheme="blue", variant="soft"),
-                    content="Exportar CSV"
-    
+                    rx.icon_button(
+                        rx.icon("upload"),
+                        on_click=MonitoramentoState.exportar_ativos_csv,
+                        color_scheme="blue",
+                        variant="soft",
+                    ),
+                    content="Exportar CSV",
                 ),
-    
-                rx.button(rx.icon("save"), "Salvar e Atualizar", on_click=MonitoramentoState.salvar_ativos, color_scheme="blue",justify_self="end", flex="1", variant="soft"),
+                rx.button(
+                    rx.icon("save"),
+                    "Salvar e Atualizar",
+                    on_click=MonitoramentoState.salvar_ativos,
+                    color_scheme="blue",
+                    justify_self="end",
+                    flex="1",
+                    variant="soft",
+                ),
                 width="100%",
             ),
-            
-        
             modal_edicao_ativo(),
             width="100%",
             value="ativos",
-        ),
+        )
 
     def tab_gerenciar_grupos() -> rx.Component:
+        def card_grupo(g: GrupoItem) -> rx.Component:
+            return rx.card(
+                rx.hstack(
+                    rx.vstack(
+                        rx.hstack(
+                            rx.text(g.nome, weight="bold"),
+                            rx.cond(
+                                g.ininterrupto,
+                                rx.tooltip(
+                                    rx.icon("clock-fading", size=16),
+                                    content="Este grupo é ininterrupto",
+                                ),
+                            ),
+                            width="100%",
+                            align_items="center",
+                            spacing="1",
+                        ),
+                        rx.text(f"Ativos: {g.total}", size="1", color="gray"),
+                        width="100%",
+                        spacing="0",
+                    ),
+                    rx.hstack(
+                        rx.cond(
+                            g.nome != "GERAL",
+                            rx.icon_button(
+                                rx.icon("pencil"),
+                                on_click=ConfigState.iniciar_edicao_grupo(g.nome),
+                                color_scheme="blue",
+                                variant="soft",
+                            ),
+                        ),
+                        rx.icon_button(
+                            rx.icon("trash"),
+                            on_click=ConfigState.remover_grupo(g.nome),
+                            color_scheme="red",
+                            variant="soft",
+                        ),
+                    ),
+                    width="100%",
+                    align_items="center",
+                ),
+                border_left=f"4px solid var(--{g.cor}-9)",
+                width="100%",
+            )
+
         return rx.tabs.content(
             rx.dialog.title("Gerenciar Grupos de Ativos", padding_top="1em"),
             rx.dialog.description("Organize seus ativos em grupos para facilitar o monitoramento."),
-    
             rx.divider(margin_y="1em"),
-    
             rx.scroll_area(
                 rx.vstack(
-                    rx.foreach(
-                        ConfigState.grupos, 
-                        lambda g: rx.card(
-                            rx.hstack(
-                                rx.vstack(
-                                    rx.hstack(
-                                        rx.text(g["nome"], weight="bold"),
-                                        rx.cond(g["ininterrupto"], rx.tooltip(rx.icon("clock-fading", size=16), content="Este grupo é ininterrupto")),
-                                        width="100%",
-                                        align_items="center",
-                                        spacing="1"
-                                    ),
-    
-                                    rx.text(f"Ativos: {g['total']}", size="1", color="gray"),
-                                    width="100%",
-                                    spacing="0",
-                                ),
-                                
-                                rx.hstack(
-                                    rx.cond(
-                                        g["nome"] != "GERAL",
-                                        rx.icon_button(rx.icon("pencil"), on_click=ConfigState.iniciar_edicao_grupo(g["nome"]), color_scheme="blue", variant="soft"),
-                                    ),
-                                    
-                                    rx.icon_button(rx.icon("trash"), on_click=ConfigState.remover_grupo(g["nome"]), color_scheme="red", variant="soft"),
-                                ),
-                                
-                                width="100%",
-                                align_items="center",
-                            ),
-                            border_left=f"4px solid var(--{g["cor"]}-9)",
-                            width="100%",
-                        )
-                    ),
+                    rx.foreach(ConfigState.grupos, card_grupo),
                     spacing="2",
                     padding_right="0.1em",
                 ),
-    
                 type="scroll",
                 style={"max_height": "40vh", "min_height": "40vh"},
             ),
-    
             rx.divider(margin_y="1em"),
-
             rx.alert_dialog.root(
                 rx.alert_dialog.trigger(
                     rx.button(
@@ -1022,13 +1072,10 @@ def configurações_ativos() -> rx.Component:
                         width="100%",
                     )
                 ),
-
                 rx.alert_dialog.content(
                     rx.alert_dialog.title("Adicionar Novo Grupo"),
                     rx.alert_dialog.description("Preencha os detalhes do novo grupo."),
-
                     rx.divider(margin_y="1em"),
-
                     rx.vstack(
                         rx.hstack(
                             rx.input(
@@ -1039,56 +1086,56 @@ def configurações_ativos() -> rx.Component:
                                 on_change=ConfigState.set_novo_grupo_input,
                                 flex="1",
                             ),
-    
                             rx.select.root(
                                 rx.select.trigger(placeholder="Cor destaque"),
                                 rx.select.content(
                                     rx.foreach(
-                                            radix_colors, 
-                                            lambda cor: 
-                                            rx.select.item(rx.badge(cor.capitalize(), color_scheme=cor), value=cor)
+                                        radix_colors,
+                                        lambda cor: rx.select.item(
+                                            rx.badge(cor.capitalize(), color_scheme=cor),
+                                            value=cor,
                                         ),
+                                    ),
                                 ),
-                                default_value=ConfigState.novo_grupo_cor_input,
-                                on_change=ConfigState.set_novo_grupo_cor_input
+                                value=ConfigState.novo_grupo_cor_input,
+                                on_change=ConfigState.set_novo_grupo_cor_input,
                             ),
-    
                             spacing="1",
-                        width="100%",
+                            width="100%",
                         ),
-    
                         rx.tooltip(
                             rx.checkbox(
                                 "Ininterrupto",
                                 size="2",
                                 checked=ConfigState.novo_grupo_ininterrupto_input,
-                                on_change=ConfigState.set_novo_grupo_ininterrupto_input
+                                on_change=ConfigState.set_novo_grupo_ininterrupto_input,
                             ),
                             content="Ativo que sempre deve estar ligado. O sistema enviará alertas mais frequentes se um ativo ininterrupto ficar offline.",
                         ),
-    
                         rx.hstack(
-                            rx.button(rx.icon("plus"), "Adicionar", on_click=ConfigState.adicionar_grupo, color_scheme="green", variant="soft", flex="1"),
-
+                            rx.button(
+                                rx.icon("plus"),
+                                "Adicionar",
+                                on_click=ConfigState.adicionar_grupo,
+                                color_scheme="green",
+                                variant="soft",
+                                flex="1",
+                            ),
                             rx.alert_dialog.cancel(
                                 rx.button("Cancelar", color_scheme="gray", variant="soft")
                             ),
-    
                             spacing="1",
-                            width="100%"
-                        )                
+                            width="100%",
+                        ),
                     ),
                     width="25%",
                 ),
             ),
-
             rx.alert_dialog.root(
                 rx.alert_dialog.content(
                     rx.alert_dialog.title("Editar Grupo"),
                     rx.alert_dialog.description("Atualize nome, cor ou o status de ininterrupção do grupo."),
-
                     rx.divider(margin_y="1em"),
-
                     rx.vstack(
                         rx.hstack(
                             rx.input(
@@ -1098,22 +1145,22 @@ def configurações_ativos() -> rx.Component:
                                 on_change=ConfigState.set_edit_grupo_nome,
                                 flex="1",
                             ),
-
                             rx.select.root(
                                 rx.select.trigger(placeholder="Cor destaque"),
                                 rx.select.content(
                                     rx.foreach(
                                         radix_colors,
-                                        lambda cor: rx.select.item(rx.badge(cor.capitalize(), color_scheme=cor), value=cor)
+                                        lambda cor: rx.select.item(
+                                            rx.badge(cor.capitalize(), color_scheme=cor),
+                                            value=cor,
+                                        ),
                                     ),
                                 ),
                                 value=ConfigState.edit_grupo_cor,
                                 on_change=ConfigState.set_edit_grupo_cor,
                             ),
-
                             width="100%",
                         ),
-
                         rx.tooltip(
                             rx.checkbox(
                                 "Grupo ininterrupto",
@@ -1122,30 +1169,36 @@ def configurações_ativos() -> rx.Component:
                             ),
                             content="Ativo que sempre deve estar ligado. O sistema enviará alertas mais frequentes se um ativo ininterrupto ficar offline.",
                         ),
-
                         rx.flex(
                             rx.alert_dialog.cancel(
-                                rx.button("Cancelar", on_click=ConfigState.cancelar_edicao_grupo, color_scheme="gray", variant="soft")
+                                rx.button(
+                                    "Cancelar",
+                                    on_click=ConfigState.cancelar_edicao_grupo,
+                                    color_scheme="gray",
+                                    variant="soft",
+                                )
                             ),
                             rx.alert_dialog.action(
-                                rx.button("Salvar", on_click=ConfigState.salvar_edicao_grupo, color_scheme="blue", variant="soft")
+                                rx.button(
+                                    "Salvar",
+                                    on_click=ConfigState.salvar_edicao_grupo,
+                                    color_scheme="blue",
+                                    variant="soft",
+                                )
                             ),
                             spacing="3",
                             justify="end",
                             width="100%",
                         ),
-
                         spacing="3",
                     ),
-
                     width="30%",
                 ),
                 open=ConfigState.grupo_edicao != "",
             ),
-    
             width="100%",
-            value="grupos"
-        ),
+            value="grupos",
+        )
 
     return rx.dialog.root(
         rx.dialog.trigger(
@@ -1159,21 +1212,21 @@ def configurações_ativos() -> rx.Component:
                 justify_content="start",
             )
         ),
-
         rx.dialog.content(
-           rx.tabs.root(
+            rx.tabs.root(
                 rx.tabs.list(
                     rx.tabs.trigger("Ativos", value="ativos"),
                     rx.tabs.trigger("Grupos", value="grupos"),
                     width="100%",
                 ),
-
                 tab_gerenciar_ativos(),
                 tab_gerenciar_grupos(),
+                default_value="ativos",
             ),
             width="35%",
-        ), 
-    ),
+        ),
+    )
+
 
 # --- CAIXA/ABA DE CONFIGURAÇÕES DE USUÁRIOS ---
 def configurações_usuarios() -> rx.Component:
@@ -1184,9 +1237,8 @@ def configurações_usuarios() -> rx.Component:
                 rx.alert_dialog.description(
                     "Digite a nova senha para o usuário: ",
                     rx.text(UserManagementState.usuario_edicao.title(), weight="bold", as_="span"),
-                    "."
+                    ".",
                 ),
-
                 rx.vstack(
                     rx.input(
                         rx.input.slot(rx.icon("lock", color="gray")),
@@ -1194,7 +1246,7 @@ def configurações_usuarios() -> rx.Component:
                         type="password",
                         value=UserManagementState.nova_senha_input,
                         on_change=UserManagementState.set_nova_senha_input,
-                        width="100%"
+                        width="100%",
                     ),
                     rx.input(
                         rx.input.slot(rx.icon("check", color="gray")),
@@ -1202,33 +1254,31 @@ def configurações_usuarios() -> rx.Component:
                         type="password",
                         value=UserManagementState.nova_senha_confirmacao,
                         on_change=UserManagementState.set_nova_senha_confirmacao,
-                        width="100%"
+                        width="100%",
                     ),
                     spacing="3",
-                    margin_y="1em"
+                    margin_y="1em",
                 ),
-
                 rx.flex(
                     rx.alert_dialog.action(
                         rx.button(
-                            "Salvar Senha", 
-                            on_click=UserManagementState.salvar_nova_senha, 
+                            "Salvar Senha",
+                            on_click=UserManagementState.salvar_nova_senha,
                             color_scheme="green",
                             variant="soft",
                         )
                     ),
                     rx.alert_dialog.cancel(
                         rx.button(
-                            "Cancelar", 
-                            on_click=UserManagementState.cancelar_edicao, 
-                            color_scheme="gray", 
+                            "Cancelar",
+                            on_click=UserManagementState.cancelar_edicao,
+                            color_scheme="gray",
                             variant="soft",
                         )
                     ),
                     spacing="3",
-                    justify="end"
+                    justify="end",
                 ),
-
                 width="25%",
             ),
             open=UserManagementState.usuario_edicao != "",
@@ -1245,13 +1295,10 @@ def configurações_usuarios() -> rx.Component:
                 justify_content="start",
             )
         ),
-
         rx.dialog.content(
             rx.dialog.title("Gerenciar Usuários", padding_top="1em"),
             rx.dialog.description("Crie ou remova credenciais de acesso ao painel."),
             rx.divider(margin_y="1em"),
-        
-            # Lista de usuários existentes
             rx.scroll_area(
                 rx.vstack(
                     rx.foreach(
@@ -1267,37 +1314,54 @@ def configurações_usuarios() -> rx.Component:
                                             color_scheme=rx.cond(u["role"] == "admin", "amber", "blue"),
                                             radius="small",
                                         ),
-                                        rx.cond(AuthState.usuario_logado == u["username"],
-                                            rx.badge("Usuário Atual", color_scheme="green", radius="small")
+                                        rx.cond(
+                                            AuthState.usuario_logado == u["username"],
+                                            rx.badge("Usuário Atual", color_scheme="green", radius="small"),
                                         ),
-                                        spacing="1"
+                                        spacing="1",
                                     ),
                                     spacing="0",
-                                    align_items="start"
+                                    align_items="start",
                                 ),
                                 rx.spacer(),
                                 rx.cond(
                                     (AuthState.usuario_logado == u["username"]) | (AuthState.role_logado == "admin"),
                                     rx.hstack(
-                                        # Botão da chave abre o formulário
-                                        rx.tooltip(rx.icon_button(rx.icon("key_round"), on_click=UserManagementState.iniciar_edicao_senha(u["username"]), color_scheme="blue", variant="soft"), content="Alterar Senha"),
-                                        rx.tooltip(rx.icon_button(rx.icon("trash"), on_click=UserManagementState.deletar_usuario(u["username"]), color_scheme="red", variant="soft"), content="Deletar Usuário"),
+                                        rx.tooltip(
+                                            rx.icon_button(
+                                                rx.icon("key_round"),
+                                                on_click=UserManagementState.iniciar_edicao_senha(u["username"]),
+                                                color_scheme="blue",
+                                                variant="soft",
+                                            ),
+                                            content="Alterar Senha",
+                                        ),
+                                        rx.tooltip(
+                                            rx.icon_button(
+                                                rx.icon("trash"),
+                                                on_click=UserManagementState.deletar_usuario(u["username"]),
+                                                color_scheme="red",
+                                                variant="soft",
+                                            ),
+                                            content="Deletar Usuário",
+                                        ),
                                     ),
                                 ),
-                                width="100%", align_items="center"
+                                width="100%",
+                                align_items="center",
                             ),
-                            width="100%"
-                        )
+                            width="100%",
+                        ),
                     ),
                     width="100%",
                     padding_bottom="1em",
                     padding_right="0.1em",
                 ),
-                type="scroll", style={"max_height": "55vh", "min_height": "55vh"}, padding_right="1em"
+                type="scroll",
+                style={"max_height": "55vh", "min_height": "55vh"},
+                padding_right="1em",
             ),
-        
             rx.divider(margin_y="1em"),
-
             rx.dialog.root(
                 rx.dialog.trigger(
                     rx.button(
@@ -1308,7 +1372,6 @@ def configurações_usuarios() -> rx.Component:
                         width="100%",
                     )
                 ),
-
                 rx.dialog.content(
                     rx.dialog.title("Criar Novo Usuário"),
                     rx.dialog.description("Preencha os dados para criar um novo usuário."),
@@ -1316,77 +1379,68 @@ def configurações_usuarios() -> rx.Component:
                     rx.vstack(
                         rx.input(
                             rx.input.slot(rx.icon("user", color="gray")),
-                            placeholder="Nome de Usuário", 
-                            value=UserManagementState.form_username, 
+                            placeholder="Nome de Usuário",
+                            value=UserManagementState.form_username,
                             on_change=UserManagementState.set_form_username,
-                            width="100%"
+                            width="100%",
                         ),
                         rx.input(
                             rx.input.slot(rx.icon("mail", color="gray")),
-                            placeholder="Email", 
-                            value=UserManagementState.form_email, 
+                            placeholder="Email",
+                            value=UserManagementState.form_email,
                             on_change=UserManagementState.set_form_email,
-                            width="100%"
+                            width="100%",
                         ),
                         rx.input(
                             rx.input.slot(rx.icon("lock", color="gray")),
-                            placeholder="Senha", 
-                            type="password", 
-                            value=UserManagementState.form_password, 
+                            placeholder="Senha",
+                            type="password",
+                            value=UserManagementState.form_password,
                             on_change=UserManagementState.set_form_password,
-                            width="100%"
+                            width="100%",
                         ),
-                        rx.cond(AuthState.role_logado == "admin",
+                        rx.cond(
+                            AuthState.role_logado == "admin",
                             rx.checkbox(
-                                "Administrador", 
-                                checked=UserManagementState.form_is_admin, 
-                                on_change=UserManagementState.set_form_is_admin
+                                "Administrador",
+                                checked=UserManagementState.form_is_admin,
+                                on_change=UserManagementState.set_form_is_admin,
                             ),
                         ),
                         rx.button(
-                            rx.icon("user-plus"), 
-                            "Criar Usuário", 
-                            on_click=UserManagementState.adicionar_usuario, 
+                            rx.icon("user-plus"),
+                            "Criar Usuário",
+                            on_click=UserManagementState.adicionar_usuario,
                             color_scheme="green",
                             variant="soft",
-                            width="100%"
+                            width="100%",
                         ),
-
-                        align_items="start", width="100%", spacing="3"
+                        align_items="start",
+                        width="100%",
+                        spacing="3",
                     ),
                     width="30%",
                 ),
-            ),        
+            ),
             modal_edicao_senha(),
-
             width="30%",
         ),
-    ),
+    )
+
 
 # --- PÁGINA DO PAINEL ---
 def controles_sidebar() -> rx.Component:
     return rx.vstack(
         rx.vstack(
             rx.image(src="/icon-white256x256.svg", width="64px"),
-            rx.heading("ECHO", size="8"),        
+            rx.heading("ECHO", size="8"),
             width="100%",
             spacing="1",
             align_items="center",
         ),
-
         rx.divider(margin_y="0.5em"),
-
         rx.cond(
-            ~AppState.monitorando,
-            rx.button(
-                rx.icon("play"),
-                "Iniciar Monitoramento",
-                on_click=MonitoramentoState.dar_ignicao_global,
-                color_scheme="green",
-                variant="surface",
-                width="100%",
-                justify_content="start",
-            ),
+            AppState.monitorando,
             rx.button(
                 rx.icon("pause"),
                 "Parar Monitoramento",
@@ -1396,8 +1450,16 @@ def controles_sidebar() -> rx.Component:
                 width="100%",
                 justify_content="start",
             ),
+            rx.button(
+                rx.icon("play"),
+                "Iniciar Monitoramento",
+                on_click=MonitoramentoState.dar_ignicao_global,
+                color_scheme="green",
+                variant="surface",
+                width="100%",
+                justify_content="start",
+            ),
         ),
-
         rx.cond(
             AuthState.role_logado == "admin",
             rx.button(
@@ -1408,22 +1470,20 @@ def controles_sidebar() -> rx.Component:
                 ),
                 rx.cond(AppState.enviando_relatorio_manual, "Enviando...", "Forçar Relatório"),
                 on_click=AppState.enviar_relatorio_manual,
-                disabled=AppState.enviando_relatorio_manual | ~AppState.monitorando,
+                disabled=rx.cond(AppState.monitorando, AppState.enviando_relatorio_manual, True),
                 color_scheme="green",
                 variant="surface",
                 width="100%",
                 justify_content="start",
             ),
         ),
-
         configurações_gerais(),
         configurações_ativos(),
         configurações_usuarios(),
-
         rx.text(
             rx.cond(
                 AppState.monitorando,
-                f"Próximo relátorio em: {AppState.relatorio_min}:{AppState.relatorio_seg}",
+                f"Próximo relatório em: {AppState.relatorio_min}:{AppState.relatorio_seg}",
                 "App não está monitorando",
             ),
             size="1",
@@ -1431,13 +1491,18 @@ def controles_sidebar() -> rx.Component:
             text_align="center",
             width="100%",
         ),
-
         rx.spacer(),
-
         rx.hstack(
             rx.vstack(
                 rx.text("Conectado como:", size="2", color="gray"),
-                rx.text(AuthState.usuario_logado.title() | "Desconhecido", weight="bold"),
+                rx.text(
+                    rx.cond(
+                        AuthState.usuario_logado != "",
+                        AuthState.usuario_logado.title(),
+                        "Desconhecido",
+                    ),
+                    weight="bold",
+                ),
                 rx.text(
                     rx.cond(
                         AuthState.role_logado == "admin",
@@ -1447,13 +1512,11 @@ def controles_sidebar() -> rx.Component:
                     size="1",
                     color="gray",
                 ),
-                
                 spacing="0",
                 align_items="start",
                 padding_top="1em",
                 flex="1",
             ),
-
             rx.vstack(
                 rx.tooltip(
                     rx.icon_button(
@@ -1469,7 +1532,6 @@ def controles_sidebar() -> rx.Component:
             ),
             align_items="center",
         ),
-
         spacing="3",
         align_items="stretch",
         width="260px",
@@ -1482,10 +1544,22 @@ def controles_sidebar() -> rx.Component:
         top="0",
     )
 
+
+@rx.page(
+    route="/",
+    title="Painel • Echo",
+    on_load=[
+        AuthState.verificar_acesso,
+        MonitoramentoState.on_load,
+        UserManagementState.carregar_usuarios,
+        ConfigState.carregar_grupos,
+        ConfigState.carregar_configs,
+        AppState.conectar_painel,
+    ],
+)
 def index() -> rx.Component:
     return rx.flex(
         controles_sidebar(),
-
         rx.box(
             rx.vstack(
                 rx.grid(
@@ -1498,31 +1572,18 @@ def index() -> rx.Component:
                     spacing="3",
                     columns="2",
                 ),
-
                 padding="2em",
                 width="100%",
                 align_items="center",
             ),
-
             flex="1",
             width="100%",
         ),
-
         width="100%",
         min_height="100vh",
         align_items="start",
     )
 
+
 # --- CONFIGURAÇÃO DO APP ---
 app = rx.App()
-# Aciona o on_load e o loop de email no MonitoramentoState
-app.add_page(tela_setup_inicial, route="/setup", title="Configuração Inicial • Echo")
-app.add_page(tela_login, route="/login", title="Login • Echo", on_load=AuthState.checar_acesso_login)
-app.add_page(index, title="Painel • Echo", on_load=[
-    AuthState.verificar_acesso,
-    MonitoramentoState.on_load,
-    UserManagementState.carregar_usuarios,
-    ConfigState.carregar_grupos,
-    ConfigState.carregar_configs,
-    AppState.conectar_painel
-])
