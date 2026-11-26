@@ -1,22 +1,25 @@
-version: '3.8'
-
 services:
-  echo-app:
-    build: .
-    container_name: echo-app
-    ports:
-      - "3000:3000"   # Porta do Frontend
-      - "8000:8000"   # Porta do Backend (WebSockets)
-    dns:
-      - 192.168.1.1   # Substitua pelo IP do Servidor DNS/Roteador da sua rede
-    dns_search:
-      - empresa.local # Substitua pelo domínio/sufixo DNS local (se houver, ex: .local)
-    environment:
-      - API_URL=http://192.168.X.X:8000  # Substitua pelo IP da sua máquina no ipconfig
-      - DB_URL=sqlite:////app/data/reflex.db
-    volumes:
-      - echo-db:/app/data
+  echo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: echo-monitor
     restart: unless-stopped
-
-volumes:
-  echo-db:
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persiste o banco SQLite e as configurações editadas pela interface web
+      - ./reflex.db:/app/reflex.db
+      - ./config.env:/app/config.env
+      - ./uploaded_files:/app/uploaded_files
+    # Permite envio de pacotes ICMP (icmplib com privileged=False) dentro do container
+    cap_add:
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ping_group_range=0 2147483647
+    # Opcional: defina os servidores DNS internos da sua rede para monitorar por hostname
+    # dns:
+    #   - 192.168.0.1
+    #   - 8.8.8.8
+    # dns_search:
+    #   - mydomain.local
